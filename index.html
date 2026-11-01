@@ -253,13 +253,14 @@ async function initAuth() {
     let { data:{ session } } = await sb.auth.getSession();
     if (!session) { const { data, error } = await sb.auth.signInAnonymously(); if (error) throw error; session = data.session; }
     myUserId = session.user.id;
-    const { data:p, error } = await sb.from('profiles').select('*').eq('user_id', myUserId).maybeSingle();
+    const { data:p, error } = await sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle();
     if (error) throw error;
     if (p) { myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; localStorage.setItem('omok_trophy_cache', myTrophy); }
     $('auth').textContent = '✅ 계정 연결됨'; $('auth').style.color = 'var(--mint)';
   } catch (e) {
     $('auth').textContent = '⚠️ 연결 실패'; $('auth').style.color = 'var(--red)';
-    toast('계정 연결 실패: Anonymous 로그인과 SQL 설정을 확인하세요.', 5000);
+    console.warn(e);
+    toast('계정 연결 실패: ' + ((e && e.message) || e), 8000);
   }
   updateLobby();
 }
@@ -269,10 +270,10 @@ async function ensureProfile(nick) {
   if (!myUserId) { myNickname = nick; return true; }
   try {
     if (!myProfile) {
-      const { data, error } = await sb.from('profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
+      const { data, error } = await sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
       if (error) throw error; myProfile = data;
     } else if (myProfile.nickname !== nick) {
-      const { data, error } = await sb.from('profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
+      const { data, error } = await sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
       if (error) throw error; myProfile = data;
     }
     myNickname = nick; myTrophy = myProfile.trophy; localStorage.setItem('omok_trophy_cache', myTrophy); updateLobby();
@@ -287,7 +288,7 @@ async function ensureProfile(nick) {
 async function saveTrophy() {
   localStorage.setItem('omok_trophy_cache', myTrophy);
   if (!myUserId || !myProfile) return;
-  const { error } = await sb.from('profiles').update({ trophy:myTrophy, updated_at:new Date().toISOString() }).eq('user_id', myUserId);
+  const { error } = await sb.from('omok_profiles').update({ trophy:myTrophy, updated_at:new Date().toISOString() }).eq('user_id', myUserId);
   if (error) toast('트로피 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
 }
 
