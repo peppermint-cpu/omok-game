@@ -1,19 +1,45 @@
 <!DOCTYPE html>
 <!--
-  [Supabase 설정] SQL Editor에서 한 번 실행하세요 (트로피 저장용 players 테이블)
+  ╔══════════════════════════════════════════════════════════════╗
+  ║  [Supabase 설정]  아래 2가지를 한 번만 해주세요                  ║
+  ╚══════════════════════════════════════════════════════════════╝
 
-  create table if not exists public.players (
-    nickname   text primary key,
-    trophy     integer not null default 100,
+  (1) Supabase 대시보드 > Authentication > Sign In / Providers
+      > "Anonymous Sign-ins" 를 ON  (계정 구분용: 닉네임이 아니라 고유 ID로 트로피를 저장)
+
+  (2) SQL Editor 에서 아래 SQL 전체를 실행
+
+  -- 계정(프로필) 테이블: 로그인 사용자 1명 = 1행, 닉네임은 중복 불가
+  create table if not exists public.omok_profiles (
+    user_id    uuid primary key references auth.users(id) on delete cascade,
+    nickname   text not null check (char_length(nickname) between 2 and 10),
+    trophy     integer not null default 100 check (trophy >= 0),
     updated_at timestamptz not null default now()
   );
-  alter table public.players enable row level security;
-  drop policy if exists "players read"   on public.players;
-  drop policy if exists "players insert" on public.players;
-  drop policy if exists "players update" on public.players;
-  create policy "players read"   on public.players for select using (true);
-  create policy "players insert" on public.players for insert with check (true);
-  create policy "players update" on public.players for update using (true) with check (true);
+  create unique index if not exists omok_profiles_nickname_key on public.omok_profiles (lower(nickname));
+  alter table public.omok_profiles enable row level security;
+  drop policy if exists "profiles read"   on public.omok_profiles;
+  drop policy if exists "profiles insert" on public.omok_profiles;
+  drop policy if exists "profiles update" on public.omok_profiles;
+  create policy "profiles read"   on public.omok_profiles for select using (true);
+  create policy "profiles insert" on public.omok_profiles for insert with check (auth.uid() = user_id);
+  create policy "profiles update" on public.omok_profiles for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+  -- 방 제목 / 공개·비공개 / 비밀번호(해시) / 방장 생존 신호
+  alter table public.rooms
+    add column if not exists title         text,
+    add column if not exists is_private    boolean not null default false,
+    add column if not exists password_hash text,
+    add column if not exists host_seen_at  timestamptz,
+    add column if not exists created_at    timestamptz not null default now();
+
+  -- 익명 로그인 사용자는 'authenticated' 역할이므로 rooms / moves 접근을 허용
+  drop policy if exists "omok rooms all" on public.rooms;
+  drop policy if exists "omok moves all" on public.moves;
+  create policy "omok rooms all" on public.rooms for all using (true) with check (true);
+  create policy "omok moves all" on public.moves for all using (true) with check (true);
+
+  (옛 players 테이블은 더 이상 쓰지 않습니다:  drop table if exists public.players; )
 
   [Render 배포] 이 파일을 GitHub에 올리고 New > Static Site 로 연결
   (Build Command: 비워두기, Publish Directory: .)
@@ -68,6 +94,19 @@
         </div>
     </div>
 
+    <!-- 비공개방 비밀번호 입력 모달 -->
+    <div id="pw-modal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/70 p-6">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-xs flex flex-col gap-3 shadow-2xl">
+            <div class="text-sm font-bold text-amber-400">🔒 비공개방 입장</div>
+            <div id="pw-modal-title" class="text-xs text-slate-400 break-all"></div>
+            <input type="password" id="pw-modal-input" placeholder="비밀번호 입력" maxlength="20" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
+            <div class="flex gap-2">
+                <button id="pw-cancel-btn" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-semibold transition">취소</button>
+                <button id="pw-ok-btn" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-sm font-bold transition">입장</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 헤더 -->
     <header class="w-full max-w-md text-center py-2">
         <h1 class="text-2xl font-bold text-amber-400">실시간 오목 대국</h1>
@@ -82,23 +121,29 @@
             알림 메시지 공간
         </div>
 
-        <!-- 대기실 / 방 선택 화면 -->
-        <div id="lobby-screen" class="w-full bg-slate-800 p-6 rounded-2xl shadow-xl flex flex-col gap-4">
-            <div class="bg-slate-900 border border-slate-700 p-4 rounded-xl flex items-center justify-between">
-                <div>
-                    <div class="text-xs text-slate-400 mb-0.5">내 계정 정보</div>
-                    <div id="lobby-tier-display" class="text-sm font-bold text-amber-400">🥉 브론즈</div>
-                </div>
-                <div id="lobby-trophy-display" class="text-sm font-mono text-slate-300 font-semibold">🏆 100 트로피</div>
-            </div>
+        <!-- 로비 -->
+        <div id="lobby-screen" class="w-full flex flex-col gap-3">
 
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">플레이어 닉네임</label>
-                <input type="text" id="nickname-input" placeholder="본인 닉네임 입력" maxlength="10" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
+            <!-- 내 계정 -->
+            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-3">
+                <div class="bg-slate-900 border border-slate-700 p-3 rounded-xl flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 mb-0.5">내 계정 정보</div>
+                        <div id="lobby-tier-display" class="text-sm font-bold text-amber-400">🥉 브론즈</div>
+                    </div>
+                    <div id="lobby-trophy-display" class="text-sm font-mono text-slate-300 font-semibold">🏆 100 트로피</div>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs text-slate-400">플레이어 닉네임 (중복 불가)</label>
+                        <span id="auth-status" class="text-[10px] text-slate-500">계정 연결 중...</span>
+                    </div>
+                    <input type="text" id="nickname-input" placeholder="본인 닉네임 입력 (2~10자)" maxlength="10" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
+                </div>
             </div>
 
             <!-- AI 대전 -->
-            <div class="bg-slate-900/60 border border-emerald-600/40 rounded-xl p-3 flex flex-col gap-2">
+            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl border border-emerald-600/30 flex flex-col gap-2">
                 <div class="flex items-center justify-between">
                     <span class="text-sm font-bold text-emerald-400">🤖 AI 대전</span>
                     <span class="text-xs text-amber-300">승리 시 +10 🏆</span>
@@ -115,15 +160,44 @@
                 </div>
             </div>
 
-            <hr class="border-slate-700">
-            <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
-                방 만들기 (흑돌)
-            </button>
-            <div class="flex gap-2">
-                <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest font-bold">
-                <button id="join-room-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl transition shadow-lg">
-                    입장 (백돌)
+            <!-- 대기 중인 방 목록 -->
+            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-bold text-slate-200">📋 대기 중인 방</span>
+                    <button id="room-refresh-btn" class="text-xs text-blue-400 hover:underline">새로고침</button>
+                </div>
+                <div id="room-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto">
+                    <div class="text-center text-xs text-slate-500 py-4">방 목록을 불러오는 중...</div>
+                </div>
+            </div>
+
+            <!-- 방 만들기 -->
+            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
+                <span class="text-sm font-bold text-slate-200">➕ 방 만들기</span>
+                <input type="text" id="room-title-input" placeholder="방 제목 (비우면 자동)" maxlength="20" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-sm text-white">
+                <div class="flex gap-2 text-sm">
+                    <label class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-900 border border-slate-700 rounded-xl cursor-pointer">
+                        <input type="radio" name="room-type" value="public" checked> 🌐 공개방
+                    </label>
+                    <label class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-900 border border-slate-700 rounded-xl cursor-pointer">
+                        <input type="radio" name="room-type" value="private"> 🔒 비공개방
+                    </label>
+                </div>
+                <input type="password" id="room-password-input" placeholder="비밀번호 (4자 이상)" maxlength="20" class="hidden w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-sm text-white">
+                <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
+                    방 만들기 (흑돌)
                 </button>
+            </div>
+
+            <!-- 코드로 입장 -->
+            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
+                <span class="text-sm font-bold text-slate-200">🔑 방 코드로 입장</span>
+                <div class="flex gap-2">
+                    <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest font-bold">
+                    <button id="join-room-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl transition shadow-lg">
+                        입장 (백돌)
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -162,9 +236,9 @@
                 <div id="my-timer" class="text-xs font-mono text-amber-400 font-bold">--s</div>
             </div>
 
-            <div class="flex justify-between w-full px-2 text-xs text-slate-400 mt-1">
-                <span id="room-info-display">방 코드: -</span>
-                <button id="leave-btn" class="text-red-400 hover:underline">나가기</button>
+            <div class="flex justify-between items-center gap-2 w-full px-2 text-xs text-slate-400 mt-1">
+                <span id="room-info-display" class="truncate">방 코드: -</span>
+                <button id="leave-btn" class="text-red-400 hover:underline shrink-0">나가기</button>
             </div>
         </div>
 
@@ -181,6 +255,7 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentRoomId = null;
+        let currentRoomTitle = '';
         let myColor = null;
         let myNickname = '';
         let opponentNickname = '';
@@ -188,14 +263,27 @@
         let roomStatus = 'waiting';
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
 
-        let myTrophy = parseInt(localStorage.getItem('omok_trophy') || '100');
+        // 트로피: 로그인 전에는 임시 캐시값, 로그인 후에는 Supabase profiles 값이 기준
+        let myTrophy = parseInt(localStorage.getItem('omok_trophy_cache') || '100');
         let oppTrophy = 100;
+
+        // ===== 계정 =====
+        let myUserId = null;   // Supabase 익명 로그인 고유 ID
+        let myProfile = null;  // profiles 테이블의 내 행
 
         let movesSubscription = null;
         let roomSubscription = null;
         let timerInterval = null;
         let timeLeft = 30;
         let hasRequestedRematch = false;
+
+        // ===== 방 목록 / 방장 생존 신호 =====
+        const HOST_ALIVE_MS = 90000;      // 이 시간 안에 신호가 없으면 목록에서 제외
+        const HEARTBEAT_MS = 10000;
+        const LOBBY_POLL_MS = 4000;
+        let heartbeatTimer = null;
+        let lobbyPollTimer = null;
+        let joining = false;
 
         // ===== AI 대전 상태 =====
         let gameMode = 'online'; // 'online' | 'ai'
@@ -213,6 +301,7 @@
         const roomCodeInput = document.getElementById('room-code-input');
         const roomInfoDisplay = document.getElementById('room-info-display');
         const customToast = document.getElementById('custom-toast');
+        const nicknameInput = document.getElementById('nickname-input');
 
         function getTier(trophy) {
             if (trophy >= 1000) return '👑 오목의 신';
@@ -241,51 +330,268 @@
             }, duration);
         }
 
-        // ===== Supabase 트로피 저장/불러오기 (players 테이블) =====
-        async function syncTrophy(nick) {
+        // =====================================================
+        //            계정 (Supabase 익명 로그인 + profiles)
+        // =====================================================
+        function setAuthStatus(text, cls) {
+            const el = document.getElementById('auth-status');
+            el.textContent = text;
+            el.className = `text-[10px] ${cls}`;
+        }
+
+        async function initAuth() {
             try {
-                const { data, error } = await supabaseClient
-                    .from('players')
-                    .select('trophy')
-                    .eq('nickname', nick)
-                    .maybeSingle();
-
-                if (error) throw error;
-
-                if (data) {
-                    myTrophy = data.trophy;
-                } else {
-                    // 처음 보는 닉네임이면 현재 값으로 등록
-                    await supabaseClient
-                        .from('players')
-                        .upsert({ nickname: nick, trophy: myTrophy, updated_at: new Date().toISOString() }, { onConflict: 'nickname' });
+                let { data: { session } } = await supabaseClient.auth.getSession();
+                if (!session) {
+                    const { data, error } = await supabaseClient.auth.signInAnonymously();
+                    if (error) throw error;
+                    session = data.session;
                 }
-                localStorage.setItem('omok_trophy', myTrophy);
+                myUserId = session.user.id;
+
+                const { data: prof, error: profErr } = await supabaseClient
+                    .from('omok_profiles')
+                    .select('*')
+                    .eq('user_id', myUserId)
+                    .maybeSingle();
+                if (profErr) throw profErr;
+
+                if (prof) {
+                    myProfile = prof;
+                    myTrophy = prof.trophy;
+                    nicknameInput.value = prof.nickname;
+                    localStorage.setItem('omok_trophy_cache', myTrophy);
+                }
+                setAuthStatus('✅ 계정 연결됨', 'text-emerald-400');
             } catch (e) {
-                console.warn('트로피 동기화 실패 (players 테이블 확인 필요):', e.message || e);
+                console.warn('계정 연결 실패:', e);
+                setAuthStatus('⚠️ 계정 연결 실패 (트로피 저장 안 됨)', 'text-red-400');
+                showToast('계정 연결 실패: Supabase에서 Anonymous 로그인 활성화와 SQL 실행을 확인하세요.', 5000);
             }
             updateLobbyUI();
         }
 
-        async function saveTrophy() {
-            localStorage.setItem('omok_trophy', myTrophy);
-            if (!myNickname) return;
+        // 닉네임을 내 계정에 등록/변경한다. 이미 다른 사람이 쓰는 닉네임이면 false
+        async function ensureProfile(nick) {
+            if (nick.length < 2) {
+                showToast('닉네임은 2자 이상 입력해주세요!');
+                return false;
+            }
+            if (!myUserId) { // 계정 연결 실패 시 로컬 모드로 진행
+                myNickname = nick;
+                return true;
+            }
             try {
-                const { error } = await supabaseClient
-                    .from('players')
-                    .upsert({ nickname: myNickname, trophy: myTrophy, updated_at: new Date().toISOString() }, { onConflict: 'nickname' });
-                if (error) throw error;
+                if (!myProfile) {
+                    const { data, error } = await supabaseClient
+                        .from('omok_profiles')
+                        .insert({ user_id: myUserId, nickname: nick, trophy: 100 })
+                        .select()
+                        .single();
+                    if (error) throw error;
+                    myProfile = data;
+                } else if (myProfile.nickname !== nick) {
+                    const { data, error } = await supabaseClient
+                        .from('omok_profiles')
+                        .update({ nickname: nick, updated_at: new Date().toISOString() })
+                        .eq('user_id', myUserId)
+                        .select()
+                        .single();
+                    if (error) throw error;
+                    myProfile = data;
+                }
+                myNickname = nick;
+                myTrophy = myProfile.trophy;
+                localStorage.setItem('omok_trophy_cache', myTrophy);
+                updateLobbyUI();
+                return true;
             } catch (e) {
-                console.warn('트로피 저장 실패 (players 테이블 확인 필요):', e.message || e);
+                if (e && e.code === '23505') {
+                    showToast('이미 사용 중인 닉네임입니다. 다른 닉네임을 써주세요.');
+                    return false;
+                }
+                console.warn('프로필 처리 실패:', e);
+                showToast('⚠️ 서버 저장 불가(SQL 설정 확인). 이번 판 트로피는 저장되지 않습니다.', 4000);
+                myNickname = nick;
+                return true;
             }
         }
 
-        // 닉네임 입력 후 포커스를 벗어나면 DB에서 내 트로피를 불러온다
-        document.getElementById('nickname-input').addEventListener('change', (e) => {
-            const nick = e.target.value.trim();
-            if (nick) syncTrophy(nick);
+        async function saveTrophy() {
+            localStorage.setItem('omok_trophy_cache', myTrophy);
+            if (!myUserId || !myProfile) return;
+            const { error } = await supabaseClient
+                .from('omok_profiles')
+                .update({ trophy: myTrophy, updated_at: new Date().toISOString() })
+                .eq('user_id', myUserId);
+            if (error) {
+                showToast('트로피 저장 실패: ' + error.message);
+            } else {
+                myProfile.trophy = myTrophy;
+            }
+        }
+
+        // =====================================================
+        //                     비밀번호 유틸
+        // =====================================================
+        async function hashPw(pw, salt) {
+            const text = `${salt}:${pw}`;
+            if (window.crypto && crypto.subtle) {
+                const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+                return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+            // crypto.subtle을 쓸 수 없는 환경용 간이 해시
+            let h = 5381;
+            for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+            return 'x' + h.toString(16);
+        }
+
+        function askPassword(roomTitle) {
+            return new Promise(resolve => {
+                const modal = document.getElementById('pw-modal');
+                const input = document.getElementById('pw-modal-input');
+                const okBtn = document.getElementById('pw-ok-btn');
+                const cancelBtn = document.getElementById('pw-cancel-btn');
+                document.getElementById('pw-modal-title').textContent = `방: ${roomTitle}`;
+                input.value = '';
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                setTimeout(() => input.focus(), 50);
+
+                const close = (val) => {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                    okBtn.onclick = null;
+                    cancelBtn.onclick = null;
+                    input.onkeydown = null;
+                    resolve(val);
+                };
+                okBtn.onclick = () => close(input.value);
+                cancelBtn.onclick = () => close(null);
+                input.onkeydown = (e) => { if (e.key === 'Enter') close(input.value); };
+            });
+        }
+
+        // 공개/비공개 선택에 따라 비밀번호 입력칸 표시
+        document.querySelectorAll('input[name="room-type"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const isPrivate = document.querySelector('input[name="room-type"]:checked').value === 'private';
+                document.getElementById('room-password-input').classList.toggle('hidden', !isPrivate);
+            });
         });
 
+        // =====================================================
+        //                      방 목록(대기열)
+        // =====================================================
+        function isLobbyVisible() {
+            return !lobbyScreen.classList.contains('hidden');
+        }
+
+        async function fetchRoomList() {
+            if (!isLobbyVisible() || document.hidden) return;
+            const since = new Date(Date.now() - HOST_ALIVE_MS).toISOString();
+            const { data, error } = await supabaseClient
+                .from('rooms')
+                .select('id, room_code, title, is_private, black_player, black_trophy, created_at, host_seen_at')
+                .eq('status', 'waiting')
+                .is('winner', null)
+                .gte('host_seen_at', since)
+                .order('created_at', { ascending: false })
+                .limit(30);
+
+            if (error) {
+                renderRoomList([], '방 목록을 불러오지 못했습니다. (SQL 설정을 확인하세요)');
+                return;
+            }
+            renderRoomList(data || []);
+        }
+
+        function renderRoomList(rooms, errMsg) {
+            const listEl = document.getElementById('room-list');
+            listEl.innerHTML = '';
+
+            if (errMsg || rooms.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-center text-xs text-slate-500 py-4';
+                empty.textContent = errMsg || '대기 중인 방이 없습니다. 직접 방을 만들어 보세요!';
+                listEl.appendChild(empty);
+                return;
+            }
+
+            rooms.forEach(room => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-2 bg-slate-900 border border-slate-700 rounded-xl p-3';
+
+                const left = document.createElement('div');
+                left.className = 'min-w-0 flex-grow';
+
+                const titleLine = document.createElement('div');
+                titleLine.className = 'flex items-center gap-1.5 min-w-0';
+                const badge = document.createElement('span');
+                badge.className = room.is_private
+                    ? 'shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30'
+                    : 'shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+                badge.textContent = room.is_private ? '🔒 비공개' : '🌐 공개';
+                const title = document.createElement('span');
+                title.className = 'text-sm font-bold text-slate-100 truncate';
+                title.textContent = room.title || `${room.black_player}의 방`;
+                titleLine.appendChild(badge);
+                titleLine.appendChild(title);
+
+                const sub = document.createElement('div');
+                sub.className = 'text-xs text-slate-400 mt-1 truncate';
+                const t = room.black_trophy || 100;
+                sub.textContent = `⚫ ${room.black_player} · ${getTier(t)} · 🏆${t}`;
+
+                left.appendChild(titleLine);
+                left.appendChild(sub);
+
+                const btn = document.createElement('button');
+                btn.className = 'shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs font-bold transition';
+                btn.textContent = '입장';
+                btn.addEventListener('click', () => tryJoinRoom(room.id));
+
+                row.appendChild(left);
+                row.appendChild(btn);
+                listEl.appendChild(row);
+            });
+        }
+
+        function startLobbyPolling() {
+            stopLobbyPolling();
+            fetchRoomList();
+            lobbyPollTimer = setInterval(fetchRoomList, LOBBY_POLL_MS);
+        }
+
+        function stopLobbyPolling() {
+            clearInterval(lobbyPollTimer);
+            lobbyPollTimer = null;
+        }
+
+        document.getElementById('room-refresh-btn').addEventListener('click', fetchRoomList);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchRoomList(); });
+
+        // 방장 생존 신호: 대기 중인 동안 주기적으로 갱신 (탭을 그냥 닫아도 목록에서 사라지게)
+        function startHeartbeat() {
+            stopHeartbeat();
+            heartbeatTimer = setInterval(async () => {
+                if (roomStatus !== 'waiting' || !currentRoomId) { stopHeartbeat(); return; }
+                await supabaseClient
+                    .from('rooms')
+                    .update({ host_seen_at: new Date().toISOString() })
+                    .eq('id', currentRoomId)
+                    .eq('status', 'waiting');
+            }, HEARTBEAT_MS);
+        }
+
+        function stopHeartbeat() {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+
+        // =====================================================
+        //                      보드 / 방 입장
+        // =====================================================
         function initBoardUI() {
             boardEl.innerHTML = '';
             for (let r = 0; r < 15; r++) {
@@ -301,27 +607,40 @@
         }
 
         document.getElementById('create-room-btn').addEventListener('click', async () => {
-            const nick = document.getElementById('nickname-input').value.trim();
+            const nick = nicknameInput.value.trim();
             if (!nick) {
                 showToast('본인의 닉네임을 입력해주세요!');
                 return;
             }
-            myNickname = nick;
+
+            const isPrivate = document.querySelector('input[name="room-type"]:checked').value === 'private';
+            const pw = document.getElementById('room-password-input').value;
+            if (isPrivate && pw.length < 4) {
+                showToast('비공개방은 비밀번호를 4자 이상 입력해주세요.');
+                return;
+            }
+
+            if (!(await ensureProfile(nick))) return;
             myColor = 'black';
             gameMode = 'online';
-            await syncTrophy(myNickname);
 
             const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const title = document.getElementById('room-title-input').value.trim() || `${myNickname}의 방`;
+            const passwordHash = isPrivate ? await hashPw(pw, newRoomCode) : null;
 
             const { data, error } = await supabaseClient
                 .from('rooms')
                 .insert([{
                     room_code: newRoomCode,
+                    title: title,
+                    is_private: isPrivate,
+                    password_hash: passwordHash,
                     status: 'waiting',
                     turn: 'black',
                     black_player: myNickname,
                     black_trophy: myTrophy,
-                    winner: null
+                    winner: null,
+                    host_seen_at: new Date().toISOString()
                 }])
                 .select()
                 .single();
@@ -332,56 +651,112 @@
             }
 
             currentRoomId = data.id;
+            currentRoomTitle = title;
+            opponentNickname = '';
             startGameSession(newRoomCode, 'waiting');
+            startHeartbeat();
         });
 
-        document.getElementById('join-room-btn').addEventListener('click', async () => {
-            const nick = document.getElementById('nickname-input').value.trim();
+        // 방 목록의 [입장] 또는 코드 입장에서 공통으로 사용
+        async function tryJoinRoom(roomId) {
+            if (joining) return;
+            const nick = nicknameInput.value.trim();
             if (!nick) {
                 showToast('본인의 닉네임을 입력해주세요!');
                 return;
             }
+
+            joining = true;
+            try {
+                if (!(await ensureProfile(nick))) return;
+
+                const { data: room, error } = await supabaseClient
+                    .from('rooms')
+                    .select('*')
+                    .eq('id', roomId)
+                    .maybeSingle();
+
+                if (error || !room) {
+                    showToast('존재하지 않는 방입니다.');
+                    fetchRoomList();
+                    return;
+                }
+
+                const alive = room.host_seen_at && (Date.now() - new Date(room.host_seen_at).getTime() < HOST_ALIVE_MS);
+                if (room.status !== 'waiting' || room.winner || !alive) {
+                    showToast('이미 시작되었거나 닫힌 방입니다.');
+                    fetchRoomList();
+                    return;
+                }
+                if (room.black_player === myNickname) {
+                    showToast('자신이 만든 방에는 입장할 수 없습니다.');
+                    return;
+                }
+
+                if (room.is_private) {
+                    const pw = await askPassword(room.title || `${room.black_player}의 방`);
+                    if (pw === null) return;
+                    const hash = await hashPw(pw, room.room_code);
+                    if (hash !== room.password_hash) {
+                        showToast('비밀번호가 틀렸습니다.');
+                        return;
+                    }
+                }
+
+                // 동시에 두 명이 들어오는 것을 막기 위해 '아직 waiting일 때만' 갱신
+                const { data: updatedRows, error: joinErr } = await supabaseClient
+                    .from('rooms')
+                    .update({
+                        status: 'playing',
+                        white_player: myNickname,
+                        white_trophy: myTrophy
+                    })
+                    .eq('id', roomId)
+                    .eq('status', 'waiting')
+                    .select();
+
+                if (joinErr || !updatedRows || updatedRows.length === 0) {
+                    showToast('입장에 실패했습니다. 다른 사람이 먼저 입장했을 수 있어요.');
+                    fetchRoomList();
+                    return;
+                }
+
+                currentRoomId = room.id;
+                currentRoomTitle = room.title || `${room.black_player}의 방`;
+                myColor = 'white';
+                gameMode = 'online';
+                opponentNickname = room.black_player || '상대방';
+                oppTrophy = room.black_trophy || 100;
+                startGameSession(room.room_code, 'playing');
+            } finally {
+                joining = false;
+            }
+        }
+
+        document.getElementById('join-room-btn').addEventListener('click', async () => {
             const code = roomCodeInput.value.trim().toUpperCase();
             if (!code) {
                 showToast('방 코드를 입력해주세요.');
                 return;
             }
-
             const { data, error } = await supabaseClient
                 .from('rooms')
-                .select('*')
+                .select('id')
                 .eq('room_code', code)
-                .single();
+                .maybeSingle();
 
             if (error || !data) {
                 showToast('존재하지 않는 방이거나 코드가 잘못되었습니다.');
                 return;
             }
-
-            currentRoomId = data.id;
-            myNickname = nick;
-            myColor = 'white';
-            gameMode = 'online';
-            await syncTrophy(myNickname);
-            opponentNickname = data.black_player || '상대방';
-            oppTrophy = data.black_trophy || 100;
-
-            await supabaseClient
-                .from('rooms')
-                .update({
-                    status: 'playing',
-                    white_player: myNickname,
-                    white_trophy: myTrophy
-                })
-                .eq('id', currentRoomId);
-
-            startGameSession(code, 'playing');
+            tryJoinRoom(data.id);
         });
 
         function startGameSession(code, initialStatus) {
+            stopLobbyPolling();
             lobbyScreen.classList.add('hidden');
             gameScreen.classList.remove('hidden');
-            roomInfoDisplay.textContent = `방 코드: ${code}`;
+            roomInfoDisplay.textContent = `${currentRoomTitle} · 코드 ${code}`;
             roomStatus = initialStatus;
             hasRequestedRematch = false;
 
@@ -796,7 +1171,7 @@
                     trophyDiff.textContent = '-20 트로피';
                     trophyDiff.className = 'text-2xl font-bold text-red-400';
                 }
-                saveTrophy(); // localStorage + Supabase players 테이블
+                saveTrophy(); // Supabase profiles 테이블 (내 계정 행에만 저장)
             }
 
             if (isDraw) {
@@ -829,7 +1204,18 @@
             return count;
         }
 
-        document.getElementById('leave-btn').addEventListener('click', () => {
+        document.getElementById('leave-btn').addEventListener('click', async () => {
+            // 대기 중인 내 방이면 목록에서 바로 내려간다
+            if (gameMode === 'online' && currentRoomId && roomStatus === 'waiting' && myColor === 'black') {
+                stopHeartbeat();
+                try {
+                    await supabaseClient
+                        .from('rooms')
+                        .update({ host_seen_at: null })
+                        .eq('id', currentRoomId)
+                        .eq('status', 'waiting');
+                } catch (e) { /* 무시 */ }
+            }
             location.reload();
         });
 
@@ -838,18 +1224,18 @@
         // =====================================================
 
         document.getElementById('ai-start-btn').addEventListener('click', async () => {
-            const nick = document.getElementById('nickname-input').value.trim();
+            const nick = nicknameInput.value.trim();
             if (!nick) {
                 showToast('본인의 닉네임을 입력해주세요!');
                 return;
             }
-            myNickname = nick;
+            if (!(await ensureProfile(nick))) return;
             aiLevel = document.getElementById('ai-level-select').value;
-            await syncTrophy(myNickname);
             startAiGame('black');
         });
 
         function startAiGame(playerColor) {
+            stopLobbyPolling();
             gameMode = 'ai';
             currentRoomId = null;
             myColor = playerColor;
@@ -995,6 +1381,9 @@
             }
             return [pick.r, pick.c];
         }
+
+        // ===== 시작 =====
+        initAuth().then(() => startLobbyPolling());
     </script>
 </body>
 </html>
