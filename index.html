@@ -1,1389 +1,849 @@
 <!DOCTYPE html>
 <!--
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  [Supabase 설정]  아래 2가지를 한 번만 해주세요                  ║
-  ╚══════════════════════════════════════════════════════════════╝
+  [Supabase 추가 설정] 기존 SQL(profiles, rooms 컬럼, 정책)은 그대로 두고, 아이템전용으로 아래만 추가 실행하세요.
 
-  (1) Supabase 대시보드 > Authentication > Sign In / Providers
-      > "Anonymous Sign-ins" 를 ON  (계정 구분용: 닉네임이 아니라 고유 ID로 트로피를 저장)
-
-  (2) SQL Editor 에서 아래 SQL 전체를 실행
-
-  -- 계정(프로필) 테이블: 로그인 사용자 1명 = 1행, 닉네임은 중복 불가
-  create table if not exists public.omok_profiles (
-    user_id    uuid primary key references auth.users(id) on delete cascade,
-    nickname   text not null check (char_length(nickname) between 2 and 10),
-    trophy     integer not null default 100 check (trophy >= 0),
-    updated_at timestamptz not null default now()
-  );
-  create unique index if not exists omok_profiles_nickname_key on public.omok_profiles (lower(nickname));
-  alter table public.omok_profiles enable row level security;
-  drop policy if exists "profiles read"   on public.omok_profiles;
-  drop policy if exists "profiles insert" on public.omok_profiles;
-  drop policy if exists "profiles update" on public.omok_profiles;
-  create policy "profiles read"   on public.omok_profiles for select using (true);
-  create policy "profiles insert" on public.omok_profiles for insert with check (auth.uid() = user_id);
-  create policy "profiles update" on public.omok_profiles for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
-  -- 방 제목 / 공개·비공개 / 비밀번호(해시) / 방장 생존 신호
   alter table public.rooms
-    add column if not exists title         text,
-    add column if not exists is_private    boolean not null default false,
-    add column if not exists password_hash text,
-    add column if not exists host_seen_at  timestamptz,
-    add column if not exists created_at    timestamptz not null default now();
+    add column if not exists item_mode boolean not null default false,
+    add column if not exists state jsonb;
 
-  -- 익명 로그인 사용자는 'authenticated' 역할이므로 rooms / moves 접근을 허용
-  drop policy if exists "omok rooms all" on public.rooms;
-  drop policy if exists "omok moves all" on public.moves;
-  create policy "omok rooms all" on public.rooms for all using (true) with check (true);
-  create policy "omok moves all" on public.moves for all using (true) with check (true);
-
-  (옛 players 테이블은 더 이상 쓰지 않습니다:  drop table if exists public.players; )
-
-  [Render 배포] 이 파일을 GitHub에 올리고 New > Static Site 로 연결
-  (Build Command: 비워두기, Publish Directory: .)
+  (rooms / moves 테이블의 Realtime 이 켜져 있어야 합니다.)
+  [Render] GitHub 업로드 후 New > Static Site (Build Command 비움, Publish Directory: .)
 -->
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>실시간 멀티 오목</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <!-- Canvas Confetti (폭죽 효과) -->
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <style>
-        .board-grid {
-            display: grid;
-            grid-template-columns: repeat(15, minmax(0, 1fr));
-            grid-template-rows: repeat(15, minmax(0, 1fr));
-        }
-        .last-dot {
-            position: absolute;
-            width: 22%;
-            height: 22%;
-            border-radius: 9999px;
-            background: #ef4444;
-            z-index: 20;
-            pointer-events: none;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>오목 아레나</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<style>
+:root{--bg:#0d1024;--s1:#171b3a;--s2:#212756;--bd:#323a70;--gold:#f6b93b;--mint:#3ddbb0;--red:#ff5d73;--tx:#eef0ff;--mu:#8e94c8}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR',system-ui,sans-serif;background:radial-gradient(120% 70% at 50% -10%,#2a3270 0,var(--bg) 62%) fixed;color:var(--tx);min-height:100dvh;display:flex;justify-content:center}
+button{font:inherit;color:inherit;cursor:pointer;border:0}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select{font:inherit;color:var(--tx);background:#0f1330;border:1px solid var(--bd);border-radius:12px;padding:12px;width:100%;outline:0}
+input:focus,select:focus{border-color:var(--gold)}
+.app{width:100%;max-width:440px;padding:16px 14px 30px}
+.hidden{display:none!important}
+.col{display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;gap:10px}
+.grow{flex:1;min-width:0}
+.mu{color:var(--mu);font-size:13px}.tiny{font-size:11px;color:var(--mu)}
+h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-size:30px;text-align:center;color:var(--gold);letter-spacing:1px;text-shadow:0 3px 0 #7a4b00,0 8px 18px #f6b93b44;margin-bottom:12px}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:14px}
+.btn{padding:13px;border-radius:12px;font-weight:700;width:100%}
+.gold{background:linear-gradient(#ffd166,#f2a31f);color:#2a1c00;box-shadow:0 3px 0 #a86a00}
+.blue{background:#4c6fff;box-shadow:0 3px 0 #2c43b3}
+.mint{background:#19c39a;color:#04251d;box-shadow:0 3px 0 #0e7a60}
+.ghost{background:var(--s2);border:1px solid var(--bd)}
+.btn:active{transform:translateY(2px);box-shadow:none}
+.av{width:50px;height:50px;border-radius:14px;background:linear-gradient(135deg,var(--gold),#ff7a59);display:grid;place-items:center;font-size:26px;flex:none}
+.tier{font-weight:700;color:var(--gold);font-size:16px}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:var(--s1);padding:5px;border-radius:14px;border:1px solid var(--bd)}
+.tab{padding:10px 0;border-radius:10px;background:none;color:var(--mu);font-weight:700;font-size:14px}
+.tab.on{background:var(--s2);color:var(--gold)}
+.ttl{font-weight:700;font-size:15px}
+.room{display:flex;gap:10px;align-items:center;background:var(--s2);border-radius:12px;padding:10px 12px}
+.room button{padding:9px 16px;border-radius:10px;background:#4c6fff;font-weight:700;font-size:13px;flex:none}
+.bdg{font-size:10px;padding:2px 7px;border-radius:99px;margin-right:6px;font-weight:700;display:inline-block}
+.bdg.pub{background:#19c39a33;color:var(--mint)}.bdg.pri{background:#ff5d7333;color:var(--red)}.bdg.itm{background:#f6b93b33;color:var(--gold)}
+.tgs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tg{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 4px;border-radius:12px;background:#0f1330;border:1px solid var(--bd);font-size:13px;font-weight:700;cursor:pointer}
+.tg input{display:none}
+.tg:has(input:checked){border-color:var(--gold);background:#3a3410;color:var(--gold)}
+#toast{position:fixed;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:90;background:#2a2f62;border:1px solid var(--gold);color:#ffe4a3;padding:10px 16px;border-radius:12px;font-size:13px;font-weight:500;max-width:92vw;text-align:center;box-shadow:0 8px 24px #0008}
+#status{text-align:center;font-weight:700;font-size:14px;color:var(--mu);min-height:20px}
+#status.me{color:var(--gold)}
+.pc{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--s1);border:1px solid var(--bd);border-radius:14px;transition:.2s}
+.pc.turn{border-color:var(--gold);box-shadow:0 0 0 3px #f6b93b33}
+.si{width:28px;height:28px;border-radius:50%;flex:none}
+.si.black{background:radial-gradient(circle at 35% 30%,#666,#000 65%)}
+.si.white{background:radial-gradient(circle at 35% 30%,#fff,#c9cde0 75%)}
+.nm{font-weight:700;font-size:14px}
+.chip{font-size:10px;background:var(--s2);padding:2px 8px;border-radius:99px;color:var(--mu);margin-left:6px}
+.tm{font-family:ui-monospace,monospace;font-size:15px;font-weight:700;color:var(--gold)}
+.wrap{position:relative;aspect-ratio:1;padding:9px;border-radius:14px;background:linear-gradient(135deg,#e6b86a,#c88d3d);border:3px solid #7c4f17;box-shadow:0 14px 30px #0009,inset 0 0 18px #7c4f1766}
+#board{display:grid;grid-template-columns:repeat(15,1fr);grid-template-rows:repeat(15,1fr);width:100%;height:100%;touch-action:manipulation}
+.cell{position:relative;display:grid;place-items:center;cursor:pointer}
+.cell::before,.cell::after{content:'';position:absolute;background:#6b4617}
+.cell::before{left:0;right:0;top:50%;height:1px}
+.cell::after{top:0;bottom:0;left:50%;width:1px}
+.cell.c0::before{left:50%}.cell.c14::before{right:50%}.cell.r0::after{top:50%}.cell.r14::after{bottom:50%}
+.sp{position:absolute;width:24%;height:24%;border-radius:50%;background:#6b4617}
+.st{position:relative;z-index:2;width:88%;height:88%;border-radius:50%}
+.st.new{animation:drop .18s ease-out}
+.st.black{background:radial-gradient(circle at 35% 30%,#6a6a6a,#000 62%);box-shadow:1px 2px 3px #0009}
+.st.white{background:radial-gradient(circle at 35% 30%,#fff,#cfd2e3 72%);box-shadow:1px 2px 3px #0007}
+.st.block{border-radius:5px;width:80%;height:80%;background:#2a2f62;display:grid;place-items:center;font-size:11px;box-shadow:0 0 0 1px #000a}
+.st.block::before{content:'🧱'}
+.dot{position:absolute;z-index:3;width:24%;height:24%;border-radius:50%;background:var(--red);pointer-events:none}
+@keyframes drop{from{transform:scale(1.5);opacity:0}}
+#fx{position:absolute;inset:0;pointer-events:none;z-index:30;overflow:hidden;border-radius:11px}
+.fx{position:absolute;transform:translate(-50%,-50%)}
+.ring{width:16px;height:16px;border-radius:50%;border:4px solid #ffd166;animation:ring .55s ease-out forwards}
+.ring.dust{border-color:#c9b48a}
+@keyframes ring{to{width:150px;height:150px;opacity:0;border-width:1px}}
+.pt{width:8px;height:8px;border-radius:50%;background:var(--c);animation:pt .65s ease-out forwards}
+@keyframes pt{to{transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(.2);opacity:0}}
+.em{font-size:46px;animation:em .65s ease-out forwards}
+@keyframes em{0%{transform:translate(-50%,-50%) scale(.2);opacity:0}30%{transform:translate(-50%,-50%) scale(1.4);opacity:1}100%{transform:translate(-50%,-50%) scale(1.9);opacity:0}}
+.flash{left:0;top:0;width:100%;height:100%;transform:none;background:radial-gradient(circle,#fffb,#ffd16688 50%,transparent 78%);animation:fl .5s ease-out forwards}
+@keyframes fl{from{opacity:1}to{opacity:0}}
+.st.boom{animation:boom .45s ease-in forwards}
+@keyframes boom{30%{transform:scale(1.35);filter:brightness(2.5)}100%{transform:scale(0);opacity:0;filter:brightness(4)}}
+.st.block.new{animation:slam .5s cubic-bezier(.3,.7,.4,1)}
+@keyframes slam{0%{transform:translateY(-260%) scale(1.8);opacity:0}60%{transform:translateY(0) scale(1);opacity:1}78%{transform:translateY(-12%) scale(1.06)}100%{transform:none}}
+.shake{animation:shake .4s}
+@keyframes shake{20%{transform:translate(-4px,2px)}40%{transform:translate(4px,-3px)}60%{transform:translate(-3px,-2px)}80%{transform:translate(2px,2px)}}
+.slot.pop{animation:pop .6s}
+@keyframes pop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.25);box-shadow:0 0 18px var(--gold)}100%{transform:none}}
+@keyframes pl{50%{transform:scale(.78)}}
+.tg-black .st.black,.tg-white .st.white{animation:pl .7s infinite;box-shadow:0 0 0 2px var(--red)}
+.items{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.slot{background:var(--s2);border:1px solid var(--bd);border-radius:12px;padding:8px 0;font-size:12px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:62px;justify-content:center}
+.slot .ico{font-size:22px}
+.slot.on{border-color:var(--gold);background:#3a3410}
+.slot.empty{opacity:.3;cursor:default}
+#hint{text-align:center;font-size:12px;color:var(--mu)}
+.ov{position:fixed;inset:0;z-index:60;background:#05071ccc;backdrop-filter:blur(4px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:14px}
+.ov .box{width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px}
+#r-title{font-family:'Black Han Sans',sans-serif;font-size:56px}
+.tro{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:12px 28px;text-align:center}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
 </head>
-<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center justify-between p-4 relative overflow-x-hidden">
+<body>
+<div class="app">
+<h1>🎯 오목 아레나</h1>
+<div id="toast" class="hidden"></div>
 
-    <!-- 승리/패배 오버레이 화면 -->
-    <div id="result-overlay" class="fixed inset-0 bg-black/80 z-50 hidden flex flex-col items-center justify-center p-6 backdrop-blur-sm transition-all">
-        <div id="result-title" class="text-6xl font-black mb-4 tracking-wider animate-bounce">승리!</div>
-        <div id="result-desc" class="text-xl text-slate-300 mb-6 text-center">상대를 제압하고 승리하였습니다!</div>
-        <div id="trophy-change-box" class="bg-slate-800 border border-slate-700 px-6 py-3 rounded-2xl text-center mb-6 shadow-xl">
-            <span class="text-sm text-slate-400 block mb-1">트로피 변동</span>
-            <span id="trophy-diff" class="text-2xl font-bold text-amber-400">+30 트로피</span>
-        </div>
+<!-- 결과 -->
+<div id="result" class="ov hidden">
+  <div id="r-title"></div>
+  <div id="r-desc" class="mu"></div>
+  <div class="tro"><div class="tiny">트로피 변동</div><div id="r-diff" style="font-size:24px;font-weight:700"></div></div>
+  <div class="box">
+    <div id="rm-msg" class="mu" style="text-align:center;min-height:18px;color:var(--gold)"></div>
+    <button id="rm-btn" class="btn blue" onclick="requestRematch()">🔄 재대결 요청</button>
+    <button class="btn ghost" onclick="location.reload()">로비로 돌아가기</button>
+  </div>
+</div>
 
-        <div class="w-full max-w-xs flex flex-col gap-3">
-            <div id="rematch-status-msg" class="text-sm text-amber-300 text-center font-medium min-h-[20px]"></div>
-            <button id="rematch-btn" onclick="requestRematch()" class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-base">
-                🔄 재대결 요청
-            </button>
-            <button onclick="location.reload()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl transition text-sm border border-slate-700">
-                로비로 돌아가기
-            </button>
-        </div>
+<!-- 비밀번호 -->
+<div id="pw" class="ov hidden">
+  <div class="card box">
+    <div class="ttl" style="color:var(--gold)">🔒 비공개방 입장</div>
+    <div id="pw-t" class="tiny"></div>
+    <input type="password" id="pw-in" placeholder="비밀번호" maxlength="20">
+    <div class="row"><button id="pw-no" class="btn ghost">취소</button><button id="pw-ok" class="btn blue">입장</button></div>
+  </div>
+</div>
+
+<!-- 로비 -->
+<section id="lobby" class="col">
+  <div class="card col">
+    <div class="row">
+      <div class="av">⚫</div>
+      <div class="grow"><div id="l-tier" class="tier"></div><div id="l-tro" class="mu"></div></div>
+      <span id="auth" class="tiny">연결 중...</span>
     </div>
+    <input id="nick" placeholder="닉네임 (2~10자, 중복 불가)" maxlength="10">
+  </div>
 
-    <!-- 비공개방 비밀번호 입력 모달 -->
-    <div id="pw-modal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/70 p-6">
-        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-xs flex flex-col gap-3 shadow-2xl">
-            <div class="text-sm font-bold text-amber-400">🔒 비공개방 입장</div>
-            <div id="pw-modal-title" class="text-xs text-slate-400 break-all"></div>
-            <input type="password" id="pw-modal-input" placeholder="비밀번호 입력" maxlength="20" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
-            <div class="flex gap-2">
-                <button id="pw-cancel-btn" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-semibold transition">취소</button>
-                <button id="pw-ok-btn" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-sm font-bold transition">입장</button>
-            </div>
-        </div>
+  <nav class="tabs">
+    <button class="tab on" data-t="rooms">🚪 방 목록</button>
+    <button class="tab" data-t="create">➕ 방 만들기</button>
+    <button class="tab" data-t="ai">🤖 AI 대전</button>
+  </nav>
+
+  <div id="p-rooms" class="card col">
+    <div class="row"><span class="ttl grow">대기 중인 방</span><button id="refresh" class="tiny" style="background:none;color:#7f9bff">새로고침</button></div>
+    <div id="room-list" class="col" style="max-height:300px;overflow-y:auto"></div>
+    <div class="row"><input id="code" placeholder="방 코드" style="text-transform:uppercase;text-align:center;letter-spacing:3px"><button id="join" class="btn blue" style="width:90px">입장</button></div>
+  </div>
+
+  <div id="p-create" class="card col hidden">
+    <input id="r-name" placeholder="방 제목 (비우면 자동)" maxlength="20">
+    <div class="tgs">
+      <label class="tg"><input type="checkbox" id="o-priv">🔒 비공개방</label>
+      <label class="tg"><input type="checkbox" id="o-item">⚡ 아이템전</label>
     </div>
-
-    <!-- 헤더 -->
-    <header class="w-full max-w-md text-center py-2">
-        <h1 class="text-2xl font-bold text-amber-400">실시간 오목 대국</h1>
-        <p id="top-status-msg" class="text-sm text-slate-400 mt-1">닉네임을 입력하고 방을 만들거나 입장하세요.</p>
-    </header>
-
-    <!-- 메인 컨텐츠 영역 -->
-    <main class="w-full max-w-md flex flex-col items-center flex-grow justify-center gap-3">
-
-        <!-- 커스텀 알림 배너 -->
-        <div id="custom-toast" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 px-4 py-2 rounded-xl text-center text-sm shadow-lg hidden transition-all duration-300">
-            알림 메시지 공간
-        </div>
-
-        <!-- 로비 -->
-        <div id="lobby-screen" class="w-full flex flex-col gap-3">
-
-            <!-- 내 계정 -->
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-3">
-                <div class="bg-slate-900 border border-slate-700 p-3 rounded-xl flex items-center justify-between">
-                    <div>
-                        <div class="text-xs text-slate-400 mb-0.5">내 계정 정보</div>
-                        <div id="lobby-tier-display" class="text-sm font-bold text-amber-400">🥉 브론즈</div>
-                    </div>
-                    <div id="lobby-trophy-display" class="text-sm font-mono text-slate-300 font-semibold">🏆 100 트로피</div>
-                </div>
-                <div>
-                    <div class="flex items-center justify-between mb-1">
-                        <label class="block text-xs text-slate-400">플레이어 닉네임 (중복 불가)</label>
-                        <span id="auth-status" class="text-[10px] text-slate-500">계정 연결 중...</span>
-                    </div>
-                    <input type="text" id="nickname-input" placeholder="본인 닉네임 입력 (2~10자)" maxlength="10" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
-                </div>
-            </div>
-
-            <!-- AI 대전 -->
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl border border-emerald-600/30 flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                    <span class="text-sm font-bold text-emerald-400">🤖 AI 대전</span>
-                    <span class="text-xs text-amber-300">승리 시 +10 🏆</span>
-                </div>
-                <div class="flex gap-2">
-                    <select id="ai-level-select" class="flex-grow px-3 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm font-semibold focus:outline-none focus:border-emerald-500">
-                        <option value="easy">쉬움</option>
-                        <option value="normal" selected>보통</option>
-                        <option value="hard">어려움</option>
-                    </select>
-                    <button id="ai-start-btn" class="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl transition shadow-lg text-sm">
-                        AI와 대결 (흑돌)
-                    </button>
-                </div>
-            </div>
-
-            <!-- 대기 중인 방 목록 -->
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                    <span class="text-sm font-bold text-slate-200">📋 대기 중인 방</span>
-                    <button id="room-refresh-btn" class="text-xs text-blue-400 hover:underline">새로고침</button>
-                </div>
-                <div id="room-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto">
-                    <div class="text-center text-xs text-slate-500 py-4">방 목록을 불러오는 중...</div>
-                </div>
-            </div>
-
-            <!-- 방 만들기 -->
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
-                <span class="text-sm font-bold text-slate-200">➕ 방 만들기</span>
-                <input type="text" id="room-title-input" placeholder="방 제목 (비우면 자동)" maxlength="20" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-sm text-white">
-                <div class="flex gap-2 text-sm">
-                    <label class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-900 border border-slate-700 rounded-xl cursor-pointer">
-                        <input type="radio" name="room-type" value="public" checked> 🌐 공개방
-                    </label>
-                    <label class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-900 border border-slate-700 rounded-xl cursor-pointer">
-                        <input type="radio" name="room-type" value="private"> 🔒 비공개방
-                    </label>
-                </div>
-                <input type="password" id="room-password-input" placeholder="비밀번호 (4자 이상)" maxlength="20" class="hidden w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-sm text-white">
-                <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
-                    방 만들기 (흑돌)
-                </button>
-            </div>
-
-            <!-- 코드로 입장 -->
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-2">
-                <span class="text-sm font-bold text-slate-200">🔑 방 코드로 입장</span>
-                <div class="flex gap-2">
-                    <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest font-bold">
-                    <button id="join-room-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl transition shadow-lg">
-                        입장 (백돌)
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 게임 플레이 화면 -->
-        <div id="game-screen" class="w-full hidden flex flex-col items-center gap-3">
-
-            <div id="opponent-card" class="w-full bg-slate-800/80 border border-slate-700 p-3 rounded-xl flex items-center justify-between shadow-md">
-                <div class="flex items-center gap-3">
-                    <div id="opp-stone-icon" class="w-6 h-6 rounded-full bg-white border border-slate-400 shadow"></div>
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <span id="opp-name" class="font-bold text-sm text-slate-200">상대방 대기 중...</span>
-                            <span id="opp-tier" class="text-[10px] bg-slate-700 px-2 py-0.5 rounded-full text-slate-300">브론즈</span>
-                        </div>
-                        <div id="opp-trophy" class="text-xs text-amber-400/80">🏆 100 트로피</div>
-                    </div>
-                </div>
-                <div id="opp-timer" class="text-xs font-mono text-slate-400">--s</div>
-            </div>
-
-            <div class="w-full aspect-square bg-amber-600 p-3 rounded-xl shadow-2xl relative flex items-center justify-center border-4 border-amber-800">
-                <div id="omok-board" class="board-grid w-full h-full relative cursor-pointer"></div>
-            </div>
-
-            <div id="my-card" class="w-full bg-slate-800 border-2 border-amber-500/60 p-3 rounded-xl flex items-center justify-between shadow-md">
-                <div class="flex items-center gap-3">
-                    <div id="my-stone-icon" class="w-6 h-6 rounded-full bg-black shadow"></div>
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <span id="my-name" class="font-bold text-sm text-amber-400">내 닉네임</span>
-                            <span id="my-tier" class="text-[10px] bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 rounded-full text-amber-300">브론즈</span>
-                        </div>
-                        <div id="my-trophy" class="text-xs text-amber-400">🏆 100 트로피</div>
-                    </div>
-                </div>
-                <div id="my-timer" class="text-xs font-mono text-amber-400 font-bold">--s</div>
-            </div>
-
-            <div class="flex justify-between items-center gap-2 w-full px-2 text-xs text-slate-400 mt-1">
-                <span id="room-info-display" class="truncate">방 코드: -</span>
-                <button id="leave-btn" class="text-red-400 hover:underline shrink-0">나가기</button>
-            </div>
-        </div>
-
-    </main>
-
-    <footer class="w-full max-w-md text-center text-xs text-slate-500 py-2">
-        Supabase Realtime Multiplayer Omok
-    </footer>
-
-    <!-- 로직 스크립트 -->
-    <script>
-        const SUPABASE_URL = 'https://lunsgjjznfhfbtfcvoye.supabase.co';
-        const SUPABASE_ANON_KEY = 'sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB';
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-        let currentRoomId = null;
-        let currentRoomTitle = '';
-        let myColor = null;
-        let myNickname = '';
-        let opponentNickname = '';
-        let currentTurn = 'black';
-        let roomStatus = 'waiting';
-        let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-
-        // 트로피: 로그인 전에는 임시 캐시값, 로그인 후에는 Supabase profiles 값이 기준
-        let myTrophy = parseInt(localStorage.getItem('omok_trophy_cache') || '100');
-        let oppTrophy = 100;
-
-        // ===== 계정 =====
-        let myUserId = null;   // Supabase 익명 로그인 고유 ID
-        let myProfile = null;  // profiles 테이블의 내 행
-
-        let movesSubscription = null;
-        let roomSubscription = null;
-        let timerInterval = null;
-        let timeLeft = 30;
-        let hasRequestedRematch = false;
-
-        // ===== 방 목록 / 방장 생존 신호 =====
-        const HOST_ALIVE_MS = 90000;      // 이 시간 안에 신호가 없으면 목록에서 제외
-        const HEARTBEAT_MS = 10000;
-        const LOBBY_POLL_MS = 4000;
-        let heartbeatTimer = null;
-        let lobbyPollTimer = null;
-        let joining = false;
-
-        // ===== AI 대전 상태 =====
-        let gameMode = 'online'; // 'online' | 'ai'
-        let aiColor = 'white';
-        let aiLevel = 'normal';
-        let aiThinking = false;
-        let aiGameOver = false;
-        const AI_WIN_TROPHY = 10;
-        const AI_LEVEL_LABEL = { easy: '쉬움', normal: '보통', hard: '어려움' };
-
-        const lobbyScreen = document.getElementById('lobby-screen');
-        const gameScreen = document.getElementById('game-screen');
-        const boardEl = document.getElementById('omok-board');
-        const topStatusMsg = document.getElementById('top-status-msg');
-        const roomCodeInput = document.getElementById('room-code-input');
-        const roomInfoDisplay = document.getElementById('room-info-display');
-        const customToast = document.getElementById('custom-toast');
-        const nicknameInput = document.getElementById('nickname-input');
-
-        function getTier(trophy) {
-            if (trophy >= 1000) return '👑 오목의 신';
-            if (trophy >= 800) return '🔮 마스터';
-            if (trophy >= 650) return '🟢 에메랄드';
-            if (trophy >= 500) return '💎 다이아몬드';
-            if (trophy >= 350) return '⚡ 플래티넘';
-            if (trophy >= 250) return '🥇 골드';
-            if (trophy >= 150) return '🥈 실버';
-            return '🥉 브론즈';
-        }
-
-        function updateLobbyUI() {
-            document.getElementById('lobby-trophy-display').textContent = `🏆 ${myTrophy} 트로피`;
-            document.getElementById('lobby-tier-display').textContent = getTier(myTrophy);
-        }
-        updateLobbyUI();
-
-        let toastTimer = null;
-        function showToast(msg, duration = 2500) {
-            customToast.textContent = msg;
-            customToast.classList.remove('hidden');
-            clearTimeout(toastTimer);
-            toastTimer = setTimeout(() => {
-                customToast.classList.add('hidden');
-            }, duration);
-        }
-
-        // =====================================================
-        //            계정 (Supabase 익명 로그인 + profiles)
-        // =====================================================
-        function setAuthStatus(text, cls) {
-            const el = document.getElementById('auth-status');
-            el.textContent = text;
-            el.className = `text-[10px] ${cls}`;
-        }
-
-        async function initAuth() {
-            try {
-                let { data: { session } } = await supabaseClient.auth.getSession();
-                if (!session) {
-                    const { data, error } = await supabaseClient.auth.signInAnonymously();
-                    if (error) throw error;
-                    session = data.session;
-                }
-                myUserId = session.user.id;
-
-                const { data: prof, error: profErr } = await supabaseClient
-                    .from('omok_profiles')
-                    .select('*')
-                    .eq('user_id', myUserId)
-                    .maybeSingle();
-                if (profErr) throw profErr;
-
-                if (prof) {
-                    myProfile = prof;
-                    myTrophy = prof.trophy;
-                    nicknameInput.value = prof.nickname;
-                    localStorage.setItem('omok_trophy_cache', myTrophy);
-                }
-                setAuthStatus('✅ 계정 연결됨', 'text-emerald-400');
-            } catch (e) {
-                console.warn('계정 연결 실패:', e);
-                setAuthStatus('⚠️ 계정 연결 실패 (트로피 저장 안 됨)', 'text-red-400');
-                showToast('계정 연결 실패: Supabase에서 Anonymous 로그인 활성화와 SQL 실행을 확인하세요.', 5000);
-            }
-            updateLobbyUI();
-        }
-
-        // 닉네임을 내 계정에 등록/변경한다. 이미 다른 사람이 쓰는 닉네임이면 false
-        async function ensureProfile(nick) {
-            if (nick.length < 2) {
-                showToast('닉네임은 2자 이상 입력해주세요!');
-                return false;
-            }
-            if (!myUserId) { // 계정 연결 실패 시 로컬 모드로 진행
-                myNickname = nick;
-                return true;
-            }
-            try {
-                if (!myProfile) {
-                    const { data, error } = await supabaseClient
-                        .from('omok_profiles')
-                        .insert({ user_id: myUserId, nickname: nick, trophy: 100 })
-                        .select()
-                        .single();
-                    if (error) throw error;
-                    myProfile = data;
-                } else if (myProfile.nickname !== nick) {
-                    const { data, error } = await supabaseClient
-                        .from('omok_profiles')
-                        .update({ nickname: nick, updated_at: new Date().toISOString() })
-                        .eq('user_id', myUserId)
-                        .select()
-                        .single();
-                    if (error) throw error;
-                    myProfile = data;
-                }
-                myNickname = nick;
-                myTrophy = myProfile.trophy;
-                localStorage.setItem('omok_trophy_cache', myTrophy);
-                updateLobbyUI();
-                return true;
-            } catch (e) {
-                if (e && e.code === '23505') {
-                    showToast('이미 사용 중인 닉네임입니다. 다른 닉네임을 써주세요.');
-                    return false;
-                }
-                console.warn('프로필 처리 실패:', e);
-                showToast('⚠️ 서버 저장 불가(SQL 설정 확인). 이번 판 트로피는 저장되지 않습니다.', 4000);
-                myNickname = nick;
-                return true;
-            }
-        }
-
-        async function saveTrophy() {
-            localStorage.setItem('omok_trophy_cache', myTrophy);
-            if (!myUserId || !myProfile) return;
-            const { error } = await supabaseClient
-                .from('omok_profiles')
-                .update({ trophy: myTrophy, updated_at: new Date().toISOString() })
-                .eq('user_id', myUserId);
-            if (error) {
-                showToast('트로피 저장 실패: ' + error.message);
-            } else {
-                myProfile.trophy = myTrophy;
-            }
-        }
-
-        // =====================================================
-        //                     비밀번호 유틸
-        // =====================================================
-        async function hashPw(pw, salt) {
-            const text = `${salt}:${pw}`;
-            if (window.crypto && crypto.subtle) {
-                const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-                return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-            }
-            // crypto.subtle을 쓸 수 없는 환경용 간이 해시
-            let h = 5381;
-            for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
-            return 'x' + h.toString(16);
-        }
-
-        function askPassword(roomTitle) {
-            return new Promise(resolve => {
-                const modal = document.getElementById('pw-modal');
-                const input = document.getElementById('pw-modal-input');
-                const okBtn = document.getElementById('pw-ok-btn');
-                const cancelBtn = document.getElementById('pw-cancel-btn');
-                document.getElementById('pw-modal-title').textContent = `방: ${roomTitle}`;
-                input.value = '';
-                modal.classList.remove('hidden');
-                modal.classList.add('flex');
-                setTimeout(() => input.focus(), 50);
-
-                const close = (val) => {
-                    modal.classList.add('hidden');
-                    modal.classList.remove('flex');
-                    okBtn.onclick = null;
-                    cancelBtn.onclick = null;
-                    input.onkeydown = null;
-                    resolve(val);
-                };
-                okBtn.onclick = () => close(input.value);
-                cancelBtn.onclick = () => close(null);
-                input.onkeydown = (e) => { if (e.key === 'Enter') close(input.value); };
-            });
-        }
-
-        // 공개/비공개 선택에 따라 비밀번호 입력칸 표시
-        document.querySelectorAll('input[name="room-type"]').forEach(radio => {
-            radio.addEventListener('change', () => {
-                const isPrivate = document.querySelector('input[name="room-type"]:checked').value === 'private';
-                document.getElementById('room-password-input').classList.toggle('hidden', !isPrivate);
-            });
-        });
-
-        // =====================================================
-        //                      방 목록(대기열)
-        // =====================================================
-        function isLobbyVisible() {
-            return !lobbyScreen.classList.contains('hidden');
-        }
-
-        async function fetchRoomList() {
-            if (!isLobbyVisible() || document.hidden) return;
-            const since = new Date(Date.now() - HOST_ALIVE_MS).toISOString();
-            const { data, error } = await supabaseClient
-                .from('rooms')
-                .select('id, room_code, title, is_private, black_player, black_trophy, created_at, host_seen_at')
-                .eq('status', 'waiting')
-                .is('winner', null)
-                .gte('host_seen_at', since)
-                .order('created_at', { ascending: false })
-                .limit(30);
-
-            if (error) {
-                renderRoomList([], '방 목록을 불러오지 못했습니다. (SQL 설정을 확인하세요)');
-                return;
-            }
-            renderRoomList(data || []);
-        }
-
-        function renderRoomList(rooms, errMsg) {
-            const listEl = document.getElementById('room-list');
-            listEl.innerHTML = '';
-
-            if (errMsg || rooms.length === 0) {
-                const empty = document.createElement('div');
-                empty.className = 'text-center text-xs text-slate-500 py-4';
-                empty.textContent = errMsg || '대기 중인 방이 없습니다. 직접 방을 만들어 보세요!';
-                listEl.appendChild(empty);
-                return;
-            }
-
-            rooms.forEach(room => {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-2 bg-slate-900 border border-slate-700 rounded-xl p-3';
-
-                const left = document.createElement('div');
-                left.className = 'min-w-0 flex-grow';
-
-                const titleLine = document.createElement('div');
-                titleLine.className = 'flex items-center gap-1.5 min-w-0';
-                const badge = document.createElement('span');
-                badge.className = room.is_private
-                    ? 'shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30'
-                    : 'shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-                badge.textContent = room.is_private ? '🔒 비공개' : '🌐 공개';
-                const title = document.createElement('span');
-                title.className = 'text-sm font-bold text-slate-100 truncate';
-                title.textContent = room.title || `${room.black_player}의 방`;
-                titleLine.appendChild(badge);
-                titleLine.appendChild(title);
-
-                const sub = document.createElement('div');
-                sub.className = 'text-xs text-slate-400 mt-1 truncate';
-                const t = room.black_trophy || 100;
-                sub.textContent = `⚫ ${room.black_player} · ${getTier(t)} · 🏆${t}`;
-
-                left.appendChild(titleLine);
-                left.appendChild(sub);
-
-                const btn = document.createElement('button');
-                btn.className = 'shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs font-bold transition';
-                btn.textContent = '입장';
-                btn.addEventListener('click', () => tryJoinRoom(room.id));
-
-                row.appendChild(left);
-                row.appendChild(btn);
-                listEl.appendChild(row);
-            });
-        }
-
-        function startLobbyPolling() {
-            stopLobbyPolling();
-            fetchRoomList();
-            lobbyPollTimer = setInterval(fetchRoomList, LOBBY_POLL_MS);
-        }
-
-        function stopLobbyPolling() {
-            clearInterval(lobbyPollTimer);
-            lobbyPollTimer = null;
-        }
-
-        document.getElementById('room-refresh-btn').addEventListener('click', fetchRoomList);
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchRoomList(); });
-
-        // 방장 생존 신호: 대기 중인 동안 주기적으로 갱신 (탭을 그냥 닫아도 목록에서 사라지게)
-        function startHeartbeat() {
-            stopHeartbeat();
-            heartbeatTimer = setInterval(async () => {
-                if (roomStatus !== 'waiting' || !currentRoomId) { stopHeartbeat(); return; }
-                await supabaseClient
-                    .from('rooms')
-                    .update({ host_seen_at: new Date().toISOString() })
-                    .eq('id', currentRoomId)
-                    .eq('status', 'waiting');
-            }, HEARTBEAT_MS);
-        }
-
-        function stopHeartbeat() {
-            clearInterval(heartbeatTimer);
-            heartbeatTimer = null;
-        }
-
-        // =====================================================
-        //                      보드 / 방 입장
-        // =====================================================
-        function initBoardUI() {
-            boardEl.innerHTML = '';
-            for (let r = 0; r < 15; r++) {
-                for (let c = 0; c < 15; c++) {
-                    const cell = document.createElement('div');
-                    cell.className = 'relative flex items-center justify-center w-full h-full border border-amber-800/40';
-                    cell.dataset.row = r;
-                    cell.dataset.col = c;
-                    cell.addEventListener('click', () => handleCellClick(r, c));
-                    boardEl.appendChild(cell);
-                }
-            }
-        }
-
-        document.getElementById('create-room-btn').addEventListener('click', async () => {
-            const nick = nicknameInput.value.trim();
-            if (!nick) {
-                showToast('본인의 닉네임을 입력해주세요!');
-                return;
-            }
-
-            const isPrivate = document.querySelector('input[name="room-type"]:checked').value === 'private';
-            const pw = document.getElementById('room-password-input').value;
-            if (isPrivate && pw.length < 4) {
-                showToast('비공개방은 비밀번호를 4자 이상 입력해주세요.');
-                return;
-            }
-
-            if (!(await ensureProfile(nick))) return;
-            myColor = 'black';
-            gameMode = 'online';
-
-            const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-            const title = document.getElementById('room-title-input').value.trim() || `${myNickname}의 방`;
-            const passwordHash = isPrivate ? await hashPw(pw, newRoomCode) : null;
-
-            const { data, error } = await supabaseClient
-                .from('rooms')
-                .insert([{
-                    room_code: newRoomCode,
-                    title: title,
-                    is_private: isPrivate,
-                    password_hash: passwordHash,
-                    status: 'waiting',
-                    turn: 'black',
-                    black_player: myNickname,
-                    black_trophy: myTrophy,
-                    winner: null,
-                    host_seen_at: new Date().toISOString()
-                }])
-                .select()
-                .single();
-
-            if (error) {
-                showToast('방 생성 실패: ' + error.message);
-                return;
-            }
-
-            currentRoomId = data.id;
-            currentRoomTitle = title;
-            opponentNickname = '';
-            startGameSession(newRoomCode, 'waiting');
-            startHeartbeat();
-        });
-
-        // 방 목록의 [입장] 또는 코드 입장에서 공통으로 사용
-        async function tryJoinRoom(roomId) {
-            if (joining) return;
-            const nick = nicknameInput.value.trim();
-            if (!nick) {
-                showToast('본인의 닉네임을 입력해주세요!');
-                return;
-            }
-
-            joining = true;
-            try {
-                if (!(await ensureProfile(nick))) return;
-
-                const { data: room, error } = await supabaseClient
-                    .from('rooms')
-                    .select('*')
-                    .eq('id', roomId)
-                    .maybeSingle();
-
-                if (error || !room) {
-                    showToast('존재하지 않는 방입니다.');
-                    fetchRoomList();
-                    return;
-                }
-
-                const alive = room.host_seen_at && (Date.now() - new Date(room.host_seen_at).getTime() < HOST_ALIVE_MS);
-                if (room.status !== 'waiting' || room.winner || !alive) {
-                    showToast('이미 시작되었거나 닫힌 방입니다.');
-                    fetchRoomList();
-                    return;
-                }
-                if (room.black_player === myNickname) {
-                    showToast('자신이 만든 방에는 입장할 수 없습니다.');
-                    return;
-                }
-
-                if (room.is_private) {
-                    const pw = await askPassword(room.title || `${room.black_player}의 방`);
-                    if (pw === null) return;
-                    const hash = await hashPw(pw, room.room_code);
-                    if (hash !== room.password_hash) {
-                        showToast('비밀번호가 틀렸습니다.');
-                        return;
-                    }
-                }
-
-                // 동시에 두 명이 들어오는 것을 막기 위해 '아직 waiting일 때만' 갱신
-                const { data: updatedRows, error: joinErr } = await supabaseClient
-                    .from('rooms')
-                    .update({
-                        status: 'playing',
-                        white_player: myNickname,
-                        white_trophy: myTrophy
-                    })
-                    .eq('id', roomId)
-                    .eq('status', 'waiting')
-                    .select();
-
-                if (joinErr || !updatedRows || updatedRows.length === 0) {
-                    showToast('입장에 실패했습니다. 다른 사람이 먼저 입장했을 수 있어요.');
-                    fetchRoomList();
-                    return;
-                }
-
-                currentRoomId = room.id;
-                currentRoomTitle = room.title || `${room.black_player}의 방`;
-                myColor = 'white';
-                gameMode = 'online';
-                opponentNickname = room.black_player || '상대방';
-                oppTrophy = room.black_trophy || 100;
-                startGameSession(room.room_code, 'playing');
-            } finally {
-                joining = false;
-            }
-        }
-
-        document.getElementById('join-room-btn').addEventListener('click', async () => {
-            const code = roomCodeInput.value.trim().toUpperCase();
-            if (!code) {
-                showToast('방 코드를 입력해주세요.');
-                return;
-            }
-            const { data, error } = await supabaseClient
-                .from('rooms')
-                .select('id')
-                .eq('room_code', code)
-                .maybeSingle();
-
-            if (error || !data) {
-                showToast('존재하지 않는 방이거나 코드가 잘못되었습니다.');
-                return;
-            }
-            tryJoinRoom(data.id);
-        });
-
-        function startGameSession(code, initialStatus) {
-            stopLobbyPolling();
-            lobbyScreen.classList.add('hidden');
-            gameScreen.classList.remove('hidden');
-            roomInfoDisplay.textContent = `${currentRoomTitle} · 코드 ${code}`;
-            roomStatus = initialStatus;
-            hasRequestedRematch = false;
-
-            document.getElementById('result-overlay').classList.add('hidden');
-            const rematchBtn = document.getElementById('rematch-btn');
-            rematchBtn.textContent = '🔄 재대결 요청';
-            rematchBtn.disabled = false;
-            rematchBtn.className = 'w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-base';
-            document.getElementById('rematch-status-msg').textContent = '';
-
-            updatePlayerCards();
-            initBoardUI();
-            loadExistingData();
-            subscribeToRealtime();
-        }
-
-        function updatePlayerCards() {
-            document.getElementById('my-name').textContent = myNickname;
-            document.getElementById('my-trophy').textContent = `🏆 ${myTrophy} 트로피`;
-            document.getElementById('my-tier').textContent = getTier(myTrophy);
-            document.getElementById('my-stone-icon').className = `w-6 h-6 rounded-full shadow ${myColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
-
-            // AI 모드 상대 카드
-            if (gameMode === 'ai') {
-                document.getElementById('opp-name').textContent = `🤖 AI (${AI_LEVEL_LABEL[aiLevel]})`;
-                document.getElementById('opp-trophy').textContent = '🏆 승리 시 +10';
-                document.getElementById('opp-tier').textContent = 'AI';
-                document.getElementById('opp-stone-icon').className = `w-6 h-6 rounded-full shadow ${aiColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
-                return;
-            }
-
-            if (opponentNickname) {
-                document.getElementById('opp-name').textContent = opponentNickname;
-                document.getElementById('opp-trophy').textContent = `🏆 ${oppTrophy} 트로피`;
-                document.getElementById('opp-tier').textContent = getTier(oppTrophy);
-                const oppColor = (myColor === 'black') ? 'white' : 'black';
-                document.getElementById('opp-stone-icon').className = `w-6 h-6 rounded-full shadow ${oppColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
-            } else {
-                document.getElementById('opp-name').textContent = '상대방 입장 대기 중...';
-                document.getElementById('opp-trophy').textContent = '🏆 -- 트로피';
-                document.getElementById('opp-tier').textContent = '대기 중';
-            }
-        }
-
-        async function loadExistingData() {
-            const { data: roomData } = await supabaseClient
-                .from('rooms')
-                .select('*')
-                .eq('id', currentRoomId)
-                .single();
-
-            if (roomData) {
-                currentTurn = roomData.turn || 'black';
-                roomStatus = roomData.status || 'waiting';
-
-                if (!roomData.winner) {
-                    document.getElementById('result-overlay').classList.add('hidden');
-                } else {
-                    handleGameOver(roomData.winner, false);
-                }
-
-                if (myColor === 'black') {
-                    opponentNickname = roomData.white_player || '';
-                    oppTrophy = roomData.white_trophy || 100;
-                } else {
-                    opponentNickname = roomData.black_player || '';
-                    oppTrophy = roomData.black_trophy || 100;
-                }
-                updatePlayerCards();
-            }
-
-            const { data, error } = await supabaseClient
-                .from('moves')
-                .select('*')
-                .eq('room_id', currentRoomId)
-                .order('created_at', { ascending: true });
-
-            if (!error && data) {
-                boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-                data.forEach(move => {
-                    boardState[move.row][move.col] = move.color;
-                    renderStone(move.row, move.col, move.color);
-                });
-            }
-            updateTurnUI();
-        }
-
-        function subscribeToRealtime() {
-            if (movesSubscription) supabaseClient.removeChannel(movesSubscription);
-            if (roomSubscription) supabaseClient.removeChannel(roomSubscription);
-
-            movesSubscription = supabaseClient
-                .channel(`moves-${currentRoomId}`)
-                .on('postgres_changes', {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'moves',
-                    filter: `room_id=eq.${currentRoomId}`
-                }, payload => {
-                    const newMove = payload.new;
-                    if (!boardState[newMove.row][newMove.col]) {
-                        boardState[newMove.row][newMove.col] = newMove.color;
-                        renderStone(newMove.row, newMove.col, newMove.color);
-
-                        currentTurn = (newMove.color === 'black') ? 'white' : 'black';
-                        updateTurnUI();
-                        checkWinCondition(newMove.row, newMove.col, newMove.color);
-                    }
-                })
-                .on('postgres_changes', {
-                    event: 'DELETE',
-                    schema: 'public',
-                    table: 'moves',
-                    filter: `room_id=eq.${currentRoomId}`
-                }, () => {
-                    boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-                    initBoardUI();
-                })
-                .subscribe();
-
-            roomSubscription = supabaseClient
-                .channel(`rooms-${currentRoomId}`)
-                .on('postgres_changes', {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'rooms',
-                    filter: `id=eq.${currentRoomId}`
-                }, payload => {
-                    const updated = payload.new;
-                    if (updated) {
-                        currentTurn = updated.turn || 'black';
-                        roomStatus = updated.status || 'waiting';
-
-                        // 재대결로 winner가 null이 되고 흑백 역할이 교체된 경우
-                        if (!updated.winner) {
-                            document.getElementById('result-overlay').classList.add('hidden');
-                            myColor = (updated.black_player === myNickname) ? 'black' : 'white';
-                            hasRequestedRematch = false;
-                            updatePlayerCards();
-                        } else if (updated.winner && document.getElementById('result-overlay').classList.contains('hidden')) {
-                            handleGameOver(updated.winner, true);
-                        }
-
-                        // 상대방이 재대결을 요청한 상태 감지 (turn에 'rematch_' 문구가 포함될 때)
-                        if (updated.turn === 'rematch_wait' && !hasRequestedRematch) {
-                            document.getElementById('rematch-status-msg').textContent = '✨ 상대방이 재대결을 원합니다!';
-                        }
-
-                        if (myColor === 'black') {
-                            opponentNickname = updated.white_player || '';
-                            oppTrophy = updated.white_trophy || 100;
-                        } else {
-                            opponentNickname = updated.black_player || '';
-                            oppTrophy = updated.black_trophy || 100;
-                        }
-                        updatePlayerCards();
-                        updateTurnUI();
-                    }
-                })
-                .subscribe();
-        }
-
-        async function requestRematch() {
-            // AI 모드: 색을 바꿔서 바로 새 게임 시작
-            if (gameMode === 'ai') {
-                startAiGame(myColor === 'black' ? 'white' : 'black');
-                return;
-            }
-
-            const rematchBtn = document.getElementById('rematch-btn');
-            const rematchMsg = document.getElementById('rematch-status-msg');
-
-            const { data: currentRoom } = await supabaseClient
-                .from('rooms')
-                .select('*')
-                .eq('id', currentRoomId)
-                .single();
-
-            if (!currentRoom) return;
-
-            if (!hasRequestedRematch && currentRoom.turn !== 'rematch_wait') {
-                // 첫 번째 요청자
-                hasRequestedRematch = true;
-                rematchBtn.textContent = '수락 대기 중...';
-                rematchBtn.disabled = true;
-                rematchBtn.className = 'w-full py-3.5 bg-slate-700 text-slate-400 font-bold rounded-xl shadow-lg cursor-not-allowed text-base';
-                rematchMsg.textContent = '상대방의 수락을 기다리는 중...';
-
-                await supabaseClient
-                    .from('rooms')
-                    .update({ turn: 'rematch_wait' })
-                    .eq('id', currentRoomId);
-            } else {
-                // 상대방이 이미 요청한 상태에서 내가 누름 -> 수락 완료! 판 비우고 역할 교대 후 재시작
-                await supabaseClient
-                    .from('moves')
-                    .delete()
-                    .eq('room_id', currentRoomId);
-
-                const newBlack = currentRoom.white_player;
-                const newWhite = currentRoom.black_player;
-
-                await supabaseClient
-                    .from('rooms')
-                    .update({
-                        turn: 'black',
-                        winner: null,
-                        black_player: newBlack,
-                        white_player: newWhite,
-                        black_trophy: (newBlack === myNickname) ? myTrophy : oppTrophy,
-                        white_trophy: (newWhite === myNickname) ? myTrophy : oppTrophy
-                    })
-                    .eq('id', currentRoomId);
-
-                myColor = (newBlack === myNickname) ? 'black' : 'white';
-                document.getElementById('result-overlay').classList.add('hidden');
-                hasRequestedRematch = false;
-                initBoardUI();
-            }
-        }
-
-        function resetTimer() {
-            clearInterval(timerInterval);
-            if (!opponentNickname || roomStatus !== 'playing' || (gameMode === 'ai' && aiGameOver)) {
-                document.getElementById('my-timer').textContent = '--s';
-                document.getElementById('opp-timer').textContent = '--s';
-                return;
-            }
-
-            timeLeft = 30;
-            updateTimerDisplay();
-
-            timerInterval = setInterval(() => {
-                timeLeft--;
-                updateTimerDisplay();
-                if (timeLeft <= 0) {
-                    clearInterval(timerInterval);
-                    if (currentTurn === myColor) {
-                        showToast('시간 초과!');
-                    }
-                }
-            }, 1000);
-        }
-
-        function updateTimerDisplay() {
-            const myTimerEl = document.getElementById('my-timer');
-            const oppTimerEl = document.getElementById('opp-timer');
-
-            if (!opponentNickname || roomStatus !== 'playing') {
-                myTimerEl.textContent = '--s';
-                oppTimerEl.textContent = '--s';
-                return;
-            }
-
-            if (currentTurn === myColor) {
-                myTimerEl.textContent = `${timeLeft}초`;
-                oppTimerEl.textContent = '--s';
-            } else {
-                myTimerEl.textContent = '--s';
-                oppTimerEl.textContent = `${timeLeft}초`;
-            }
-        }
-
-        async function handleCellClick(r, c) {
-            // ===== AI 대전 =====
-            if (gameMode === 'ai') {
-                if (aiGameOver || aiThinking) return;
-                if (currentTurn !== myColor) {
-                    showToast('지금은 내 차례가 아닙니다!');
-                    return;
-                }
-                if (boardState[r][c] !== null) return;
-
-                const ended = placeAiModeStone(r, c, myColor);
-                if (!ended) aiMove();
-                return;
-            }
-
-            // ===== 온라인 대전 =====
-            if (!currentRoomId) return;
-
-            if (!opponentNickname || roomStatus !== 'playing') {
-                showToast('아직 상대방이 입장하지 않았습니다!');
-                return;
-            }
-
-            if (currentTurn !== myColor) {
-                showToast('지금은 내 차례가 아닙니다!');
-                return;
-            }
-
-            if (boardState[r][c] !== null) {
-                return;
-            }
-
-            const nextTurn = (myColor === 'black') ? 'white' : 'black';
-
-            const { error: moveError } = await supabaseClient
-                .from('moves')
-                .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
-
-            if (moveError) {
-                showToast('착수 실패: ' + moveError.message);
-                return;
-            }
-
-            await supabaseClient
-                .from('rooms')
-                .update({ turn: nextTurn })
-                .eq('id', currentRoomId);
-        }
-
-        function renderStone(r, c, color) {
-            const cell = boardEl.querySelector(`[data-row='${r}'][data-col='${c}']`);
-            if (!cell) return;
-            cell.innerHTML = '';
-            const stone = document.createElement('div');
-            stone.className = `w-5/6 h-5/6 rounded-full shadow-lg z-10 ${color === 'black' ? 'bg-black' : 'bg-white border-2 border-slate-300'}`;
-            cell.appendChild(stone);
-
-            // 마지막 착수 표시
-            boardEl.querySelectorAll('.last-dot').forEach(el => el.remove());
-            const dot = document.createElement('div');
-            dot.className = 'last-dot';
-            cell.appendChild(dot);
-        }
-
-        function updateTurnUI() {
-            resetTimer();
-            if (!opponentNickname || roomStatus !== 'playing') {
-                topStatusMsg.textContent = '상대방의 입장을 기다리는 중입니다...';
-                topStatusMsg.className = 'text-sm text-slate-400 mt-1';
-                return;
-            }
-
-            if (currentTurn === myColor) {
-                topStatusMsg.textContent = '내 차례입니다!';
-                topStatusMsg.className = 'text-sm text-amber-400 font-bold mt-1';
-            } else {
-                topStatusMsg.textContent = gameMode === 'ai' ? '🤖 AI가 생각 중...' : '상대방의 차례를 기다리는 중...';
-                topStatusMsg.className = 'text-sm text-slate-400 mt-1';
-            }
-        }
-
-        function isFiveInRow(r, c, color) {
-            const directions = [
-                { dr: 0, dc: 1 },
-                { dr: 1, dc: 0 },
-                { dr: 1, dc: 1 },
-                { dr: 1, dc: -1 }
-            ];
-            for (let { dr, dc } of directions) {
-                let count = 1;
-                count += countConsecutive(r, c, dr, dc, color);
-                count += countConsecutive(r, c, -dr, -dc, color);
-                if (count >= 5) return true;
-            }
-            return false;
-        }
-
-        async function checkWinCondition(r, c, color) {
-            if (isFiveInRow(r, c, color)) {
-                clearInterval(timerInterval);
-                await supabaseClient
-                    .from('rooms')
-                    .update({ winner: color })
-                    .eq('id', currentRoomId);
-            }
-        }
-
-        function handleGameOver(winnerColor, applyTrophy = true) {
-            clearInterval(timerInterval);
-            const overlay = document.getElementById('result-overlay');
-            const resultTitle = document.getElementById('result-title');
-            const resultDesc = document.getElementById('result-desc');
-            const trophyDiff = document.getElementById('trophy-diff');
-            const rematchBtn = document.getElementById('rematch-btn');
-
-            overlay.classList.remove('hidden');
-
-            const isMeWinner = (winnerColor === myColor);
-            const isAi = (gameMode === 'ai');
-            const isDraw = (winnerColor === 'draw');
-
-            if (isAi) {
-                rematchBtn.textContent = '🔄 한 판 더 (색 교대)';
-                rematchBtn.disabled = false;
-                document.getElementById('rematch-status-msg').textContent = '';
-            }
-
-            if (applyTrophy) {
-                if (isDraw) {
-                    trophyDiff.textContent = '변동 없음';
-                    trophyDiff.className = 'text-2xl font-bold text-slate-300';
-                } else if (isMeWinner) {
-                    const gain = isAi ? AI_WIN_TROPHY : 30;
-                    myTrophy += gain;
-                    trophyDiff.textContent = `+${gain} 트로피`;
-                    trophyDiff.className = 'text-2xl font-bold text-amber-400';
-
-                    confetti({
-                        particleCount: 150,
-                        spread: 80,
-                        origin: { y: 0.6 }
-                    });
-                } else if (isAi) {
-                    // AI에게 져도 트로피는 깎이지 않는다
-                    trophyDiff.textContent = '변동 없음';
-                    trophyDiff.className = 'text-2xl font-bold text-slate-300';
-                } else {
-                    myTrophy = Math.max(0, myTrophy - 20);
-                    trophyDiff.textContent = '-20 트로피';
-                    trophyDiff.className = 'text-2xl font-bold text-red-400';
-                }
-                saveTrophy(); // Supabase profiles 테이블 (내 계정 행에만 저장)
-            }
-
-            if (isDraw) {
-                resultTitle.textContent = '무승부';
-                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-slate-300';
-                resultDesc.textContent = '판이 가득 찼습니다.';
-            } else if (isMeWinner) {
-                resultTitle.textContent = '🏆 승리!';
-                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-amber-400 animate-bounce';
-                resultDesc.textContent = isAi ? 'AI를 제압하고 승리하였습니다!' : '상대를 제압하고 승리하였습니다!';
-            } else {
-                resultTitle.textContent = '패배...';
-                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-slate-500';
-                resultDesc.textContent = '아쉽게 패배했습니다. 다음 기회에 도전하세요!';
-            }
-
-            updatePlayerCards();
-            updateLobbyUI();
-        }
-
-        function countConsecutive(r, c, dr, dc, color) {
-            let count = 0;
-            let nr = r + dr;
-            let nc = c + dc;
-            while (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && boardState[nr][nc] === color) {
-                count++;
-                nr += dr;
-                nc += dc;
-            }
-            return count;
-        }
-
-        document.getElementById('leave-btn').addEventListener('click', async () => {
-            // 대기 중인 내 방이면 목록에서 바로 내려간다
-            if (gameMode === 'online' && currentRoomId && roomStatus === 'waiting' && myColor === 'black') {
-                stopHeartbeat();
-                try {
-                    await supabaseClient
-                        .from('rooms')
-                        .update({ host_seen_at: null })
-                        .eq('id', currentRoomId)
-                        .eq('status', 'waiting');
-                } catch (e) { /* 무시 */ }
-            }
-            location.reload();
-        });
-
-        // =====================================================
-        //                      AI 대전 모드
-        // =====================================================
-
-        document.getElementById('ai-start-btn').addEventListener('click', async () => {
-            const nick = nicknameInput.value.trim();
-            if (!nick) {
-                showToast('본인의 닉네임을 입력해주세요!');
-                return;
-            }
-            if (!(await ensureProfile(nick))) return;
-            aiLevel = document.getElementById('ai-level-select').value;
-            startAiGame('black');
-        });
-
-        function startAiGame(playerColor) {
-            stopLobbyPolling();
-            gameMode = 'ai';
-            currentRoomId = null;
-            myColor = playerColor;
-            aiColor = (playerColor === 'black') ? 'white' : 'black';
-            opponentNickname = `AI (${AI_LEVEL_LABEL[aiLevel]})`;
-            roomStatus = 'playing';
-            currentTurn = 'black';
-            aiGameOver = false;
-            aiThinking = false;
-            boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-
-            lobbyScreen.classList.add('hidden');
-            gameScreen.classList.remove('hidden');
-            roomInfoDisplay.textContent = `AI 대전 · ${AI_LEVEL_LABEL[aiLevel]} · 승리 시 +${AI_WIN_TROPHY}🏆`;
-
-            document.getElementById('result-overlay').classList.add('hidden');
-            document.getElementById('rematch-status-msg').textContent = '';
-
-            updatePlayerCards();
-            initBoardUI();
-            updateTurnUI();
-
-            if (aiColor === 'black') aiMove();
-        }
-
-        // 돌을 놓고 승패/무승부를 판정한다. 게임이 끝났으면 true 반환
-        function placeAiModeStone(r, c, color) {
-            boardState[r][c] = color;
-            renderStone(r, c, color);
-            currentTurn = (color === 'black') ? 'white' : 'black';
-
-            if (isFiveInRow(r, c, color)) {
-                aiGameOver = true;
-                updateTurnUI();
-                setTimeout(() => handleGameOver(color, true), 400);
-                return true;
-            }
-
-            if (boardState.every(row => row.every(cell => cell !== null))) {
-                aiGameOver = true;
-                updateTurnUI();
-                setTimeout(() => handleGameOver('draw', true), 400);
-                return true;
-            }
-
-            updateTurnUI();
-            return false;
-        }
-
-        function aiMove() {
-            aiThinking = true;
-            setTimeout(() => {
-                if (aiGameOver) { aiThinking = false; return; }
-                const [r, c] = pickAiMove();
-                placeAiModeStone(r, c, aiColor);
-                aiThinking = false;
-            }, 500);
-        }
-
-        function inBoard(r, c) {
-            return r >= 0 && r < 15 && c >= 0 && c < 15;
-        }
-
-        function hasNeighborStone(r, c, dist) {
-            for (let dr = -dist; dr <= dist; dr++) {
-                for (let dc = -dist; dc <= dist; dc++) {
-                    const nr = r + dr, nc = c + dc;
-                    if (inBoard(nr, nc) && boardState[nr][nc] !== null) return true;
-                }
-            }
-            return false;
-        }
-
-        // 한 방향 라인 점수: 연속 개수 + 양끝이 열려 있는지
-        function lineScore(r, c, dr, dc, color) {
-            let count = 1;
-            let open = 0;
-
-            let nr = r + dr, nc = c + dc;
-            while (inBoard(nr, nc) && boardState[nr][nc] === color) { count++; nr += dr; nc += dc; }
-            if (inBoard(nr, nc) && boardState[nr][nc] === null) open++;
-
-            nr = r - dr; nc = c - dc;
-            while (inBoard(nr, nc) && boardState[nr][nc] === color) { count++; nr -= dr; nc -= dc; }
-            if (inBoard(nr, nc) && boardState[nr][nc] === null) open++;
-
-            if (count >= 5) return 100000;
-            if (count === 4) return open === 2 ? 10000 : (open === 1 ? 1500 : 0);
-            if (count === 3) return open === 2 ? 1200 : (open === 1 ? 150 : 0);
-            if (count === 2) return open === 2 ? 120 : (open === 1 ? 15 : 0);
-            return open === 2 ? 3 : (open === 1 ? 1 : 0);
-        }
-
-        // 이 칸에 color 돌을 놓았을 때의 총점 (4방향 합 → 쌍삼/사삼 같은 복합 공격도 자연스럽게 높게 평가)
-        function evalCell(r, c, color) {
-            const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
-            let total = 0;
-            for (const [dr, dc] of dirs) total += lineScore(r, c, dr, dc, color);
-            return total;
-        }
-
-        function pickAiMove() {
-            let hasStone = false;
-            for (let r = 0; r < 15 && !hasStone; r++) {
-                for (let c = 0; c < 15; c++) {
-                    if (boardState[r][c] !== null) { hasStone = true; break; }
-                }
-            }
-            if (!hasStone) return [7, 7];
-
-            const scored = [];
-            for (let r = 0; r < 15; r++) {
-                for (let c = 0; c < 15; c++) {
-                    if (boardState[r][c] !== null) continue;
-                    if (!hasNeighborStone(r, c, 2)) continue;
-
-                    const attack = evalCell(r, c, aiColor);
-                    const defense = evalCell(r, c, myColor);
-                    const center = (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.1;
-                    // 내가 이기는 수(공격 5목)가 상대 5목 차단보다 우선
-                    scored.push({ r, c, s: attack * 1.1 + defense + center });
-                }
-            }
-
-            scored.sort((a, b) => b.s - a.s);
-            if (scored.length === 0) {
-                // 이웃이 없을 때(드문 경우): 아무 빈 칸
-                for (let r = 0; r < 15; r++)
-                    for (let c = 0; c < 15; c++)
-                        if (boardState[r][c] === null) return [r, c];
-            }
-
-            let pick = scored[0];
-            // 필승/필수 방어 수(만점대)는 난이도와 상관없이 항상 둔다
-            const mustPlay = scored[0].s >= 10000;
-
-            if (!mustPlay) {
-                if (aiLevel === 'easy' && Math.random() < 0.4) {
-                    pick = scored[Math.floor(Math.random() * Math.min(6, scored.length))];
-                } else if (aiLevel === 'normal' && scored.length > 1 && Math.random() < 0.2) {
-                    pick = scored[1];
-                }
-            }
-            return [pick.r, pick.c];
-        }
-
-        // ===== 시작 =====
-        initAuth().then(() => startLobbyPolling());
-    </script>
+    <input type="password" id="r-pw" class="hidden" placeholder="비밀번호 (4자 이상)" maxlength="20">
+    <div class="mu" id="item-desc" style="display:none">💣 폭탄 · 🧱 봉쇄 · ⚡ 연속착수 — 3수마다 아이템 획득!</div>
+    <button id="create" class="btn gold">방 만들기 (흑돌)</button>
+  </div>
+
+  <div id="p-ai" class="card col hidden">
+    <div class="row"><span class="ttl grow">난이도</span><span class="mu">승리 시 +10 🏆</span></div>
+    <select id="ai-lv"><option value="easy">쉬움</option><option value="normal" selected>보통</option><option value="hard">어려움</option></select>
+    <label class="tg"><input type="checkbox" id="ai-item">⚡ 아이템전 (AI도 아이템을 써요)</label>
+    <button id="ai-go" class="btn mint">AI와 대결 (흑돌)</button>
+  </div>
+</section>
+
+<!-- 게임 -->
+<section id="game" class="col hidden">
+  <div id="status"></div>
+  <div id="opp-card" class="pc">
+    <div id="opp-si" class="si white"></div>
+    <div class="grow"><div><span id="opp-nm" class="nm"></span><span id="opp-tier" class="chip"></span></div><div id="opp-tro" class="tiny"></div></div>
+    <div id="opp-tm" class="tm">--</div>
+  </div>
+  <div class="wrap"><div id="board"></div><div id="fx"></div></div>
+  <div id="items" class="items hidden"></div>
+  <div id="hint" class="hidden"></div>
+  <div id="my-card" class="pc">
+    <div id="my-si" class="si black"></div>
+    <div class="grow"><div><span id="my-nm" class="nm" style="color:var(--gold)"></span><span id="my-tier" class="chip"></span></div><div id="my-tro" class="tiny"></div></div>
+    <div id="my-tm" class="tm">--</div>
+  </div>
+  <div class="row"><span id="room-info" class="tiny grow"></span><button id="leave" style="background:none;color:var(--red);font-size:13px">나가기</button></div>
+</section>
+</div>
+
+<script>
+const sb = supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB');
+const $ = id => document.getElementById(id);
+const h = (t,c,x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+const empty = () => Array(15).fill(null).map(() => Array(15).fill(null));
+
+let roomId = null, roomTitle = '', myColor = null, myNickname = '', oppName = '', currentTurn = 'black', roomStatus = 'waiting';
+let boardState = empty(), myTrophy = parseInt(localStorage.getItem('omok_trophy_cache') || '100'), oppTrophy = 100;
+let myUserId = null, myProfile = null, movesSub = null, roomSub = null, timerI = null, timeLeft = 30, wantRematch = false, prevWinner = null;
+let gameMode = 'online', aiColor = 'white', aiLevel = 'normal', aiThinking = false, aiOver = false;
+const AI_WIN = 10, AI_LBL = { easy:'쉬움', normal:'보통', hard:'어려움' };
+const ALIVE = 90000;
+let hbTimer = null, pollTimer = null, joining = false;
+
+// ===== 아이템전 =====
+const ITEMS = {
+  bomb:  { i:'💣', n:'폭탄',  d:'제거할 상대 돌을 터치하세요' },
+  block: { i:'🧱', n:'봉쇄',  d:'막을 빈 칸을 터치하세요' },
+  double:{ i:'⚡', n:'연속',  d:'' }
+};
+const rnd = () => Object.keys(ITEMS)[Math.floor(Math.random() * 3)];
+const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
+let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0;
+const sleep = ms => new Promise(r => setTimeout(r, ms));   // rs: 아이템 상태, pending: 선택한 아이템
+const oppOf = c => c === 'black' ? 'white' : 'black';
+
+const TIERS = [[1000,'👑 오목의 신'],[800,'🔮 마스터'],[650,'🟢 에메랄드'],[500,'💎 다이아몬드'],[350,'⚡ 플래티넘'],[250,'🥇 골드'],[150,'🥈 실버'],[0,'🥉 브론즈']];
+const getTier = t => TIERS.find(x => t >= x[0])[1];
+
+function updateLobby() { $('l-tro').textContent = `🏆 ${myTrophy} 트로피`; $('l-tier').textContent = getTier(myTrophy); }
+updateLobby();
+
+let toastT;
+function toast(m, d = 2500) { const t = $('toast'); t.textContent = m; t.classList.remove('hidden'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.add('hidden'), d); }
+
+// ===== 탭 / 옵션 =====
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  ['rooms','create','ai'].forEach(k => $('p-' + k).classList.toggle('hidden', k !== b.dataset.t));
+});
+$('o-priv').onchange = e => $('r-pw').classList.toggle('hidden', !e.target.checked);
+$('o-item').onchange = e => $('item-desc').style.display = e.target.checked ? 'block' : 'none';
+
+// ===== 계정 =====
+async function initAuth() {
+  try {
+    let { data:{ session } } = await sb.auth.getSession();
+    if (!session) { const { data, error } = await sb.auth.signInAnonymously(); if (error) throw error; session = data.session; }
+    myUserId = session.user.id;
+    const { data:p, error } = await sb.from('profiles').select('*').eq('user_id', myUserId).maybeSingle();
+    if (error) throw error;
+    if (p) { myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; localStorage.setItem('omok_trophy_cache', myTrophy); }
+    $('auth').textContent = '✅ 계정 연결됨'; $('auth').style.color = 'var(--mint)';
+  } catch (e) {
+    $('auth').textContent = '⚠️ 연결 실패'; $('auth').style.color = 'var(--red)';
+    toast('계정 연결 실패: Anonymous 로그인과 SQL 설정을 확인하세요.', 5000);
+  }
+  updateLobby();
+}
+
+async function ensureProfile(nick) {
+  if (nick.length < 2) { toast('닉네임은 2자 이상 입력해주세요!'); return false; }
+  if (!myUserId) { myNickname = nick; return true; }
+  try {
+    if (!myProfile) {
+      const { data, error } = await sb.from('profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
+      if (error) throw error; myProfile = data;
+    } else if (myProfile.nickname !== nick) {
+      const { data, error } = await sb.from('profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
+      if (error) throw error; myProfile = data;
+    }
+    myNickname = nick; myTrophy = myProfile.trophy; localStorage.setItem('omok_trophy_cache', myTrophy); updateLobby();
+    return true;
+  } catch (e) {
+    if (e && e.code === '23505') { toast('이미 사용 중인 닉네임입니다.'); return false; }
+    toast('⚠️ 서버 저장 불가. 이번 판 트로피는 저장되지 않습니다.', 4000);
+    myNickname = nick; return true;
+  }
+}
+
+async function saveTrophy() {
+  localStorage.setItem('omok_trophy_cache', myTrophy);
+  if (!myUserId || !myProfile) return;
+  const { error } = await sb.from('profiles').update({ trophy:myTrophy, updated_at:new Date().toISOString() }).eq('user_id', myUserId);
+  if (error) toast('트로피 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
+}
+
+// ===== 비밀번호 =====
+async function hashPw(pw, salt) {
+  const text = `${salt}:${pw}`;
+  if (window.crypto && crypto.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  let x = 5381; for (let i = 0; i < text.length; i++) x = ((x * 33) ^ text.charCodeAt(i)) >>> 0;
+  return 'x' + x.toString(16);
+}
+
+function askPassword(title) {
+  return new Promise(res => {
+    const m = $('pw'), inp = $('pw-in');
+    $('pw-t').textContent = `방: ${title}`; inp.value = ''; m.classList.remove('hidden'); setTimeout(() => inp.focus(), 50);
+    const close = v => { m.classList.add('hidden'); res(v); };
+    $('pw-ok').onclick = () => close(inp.value);
+    $('pw-no').onclick = () => close(null);
+    inp.onkeydown = e => { if (e.key === 'Enter') close(inp.value); };
+  });
+}
+
+// ===== 방 목록 =====
+const lobbyVisible = () => !$('lobby').classList.contains('hidden');
+
+async function fetchRooms() {
+  if (!lobbyVisible() || document.hidden) return;
+  const since = new Date(Date.now() - ALIVE).toISOString();
+  const { data, error } = await sb.from('rooms')
+    .select('id,room_code,title,is_private,item_mode,black_player,black_trophy,created_at,host_seen_at')
+    .eq('status', 'waiting').is('winner', null).gte('host_seen_at', since)
+    .order('created_at', { ascending:false }).limit(30);
+  renderRooms(data || [], error ? '방 목록을 불러오지 못했습니다. SQL 설정을 확인하세요.' : '');
+}
+
+function renderRooms(rooms, err) {
+  const el = $('room-list'); el.innerHTML = '';
+  if (err || !rooms.length) { el.appendChild(h('div', 'mu', err || '대기 중인 방이 없습니다. 직접 방을 만들어 보세요!')).style.cssText = 'text-align:center;padding:16px 0'; return; }
+  rooms.forEach(r => {
+    const row = h('div', 'room'), left = h('div', 'grow'), t1 = h('div', 'ttl');
+    t1.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    t1.appendChild(h('span', 'bdg ' + (r.is_private ? 'pri' : 'pub'), r.is_private ? '🔒 비공개' : '🌐 공개'));
+    if (r.item_mode) t1.appendChild(h('span', 'bdg itm', '⚡ 아이템'));
+    t1.appendChild(document.createTextNode(r.title || `${r.black_player}의 방`));
+    const t = r.black_trophy || 100;
+    left.appendChild(t1); left.appendChild(h('div', 'tiny', `⚫ ${r.black_player} · ${getTier(t)} · 🏆${t}`));
+    const b = h('button', '', '입장'); b.onclick = () => tryJoin(r.id);
+    row.appendChild(left); row.appendChild(b); el.appendChild(row);
+  });
+}
+
+const startPolling = () => { stopPolling(); fetchRooms(); pollTimer = setInterval(fetchRooms, 4000); };
+const stopPolling = () => { clearInterval(pollTimer); pollTimer = null; };
+$('refresh').onclick = fetchRooms;
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchRooms(); });
+
+function startHeartbeat() {
+  clearInterval(hbTimer);
+  hbTimer = setInterval(async () => {
+    if (roomStatus !== 'waiting' || !roomId) { clearInterval(hbTimer); return; }
+    await sb.from('rooms').update({ host_seen_at:new Date().toISOString() }).eq('id', roomId).eq('status', 'waiting');
+  }, 10000);
+}
+
+// ===== 보드 =====
+const STARS = ['3,3','3,11','11,3','11,11','7,7'];
+function initBoard() {
+  const b = $('board'); b.innerHTML = '';
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
+    const cell = h('div', `cell r${r} c${c}`);
+    cell.dataset.row = r; cell.dataset.col = c;
+    if (STARS.includes(`${r},${c}`)) cell.appendChild(h('div', 'sp'));
+    cell.onclick = () => handleCell(r, c);
+    b.appendChild(cell);
+  }
+}
+
+function renderStone(r, c, color, quiet) {
+  const cell = $('board').querySelector(`[data-row='${r}'][data-col='${c}']`);
+  if (!cell) return;
+  cell.querySelectorAll('.st,.dot').forEach(e => e.remove());
+  cell.appendChild(h('div', 'st ' + color + (quiet ? '' : ' new')));
+  if (color !== 'block') {
+    $('board').querySelectorAll('.dot').forEach(e => e.remove());
+    cell.appendChild(h('div', 'dot'));
+  }
+}
+
+async function syncBoard() {
+  const { data } = await sb.from('moves').select('*').eq('room_id', roomId).order('created_at', { ascending:true });
+  boardState = empty(); initBoard();
+  (data || []).forEach(m => { boardState[m.row][m.col] = m.color; renderStone(m.row, m.col, m.color, true); });
+}
+
+// ===== 방 만들기 / 입장 =====
+$('create').onclick = async () => {
+  const nick = $('nick').value.trim();
+  if (!nick) return toast('본인의 닉네임을 입력해주세요!');
+  const priv = $('o-priv').checked, item = $('o-item').checked, pw = $('r-pw').value;
+  if (priv && pw.length < 4) return toast('비밀번호를 4자 이상 입력해주세요.');
+  if (!(await ensureProfile(nick))) return;
+
+  myColor = 'black'; gameMode = 'online';
+  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const title = $('r-name').value.trim() || `${myNickname}의 방`;
+  const { data, error } = await sb.from('rooms').insert([{
+    room_code:code, title, is_private:priv, item_mode:item, state:item ? newState() : null,
+    password_hash:priv ? await hashPw(pw, code) : null, status:'waiting', turn:'black',
+    black_player:myNickname, black_trophy:myTrophy, winner:null, host_seen_at:new Date().toISOString()
+  }]).select().single();
+  if (error) return toast('방 생성 실패: ' + error.message);
+
+  roomId = data.id; roomTitle = title; oppName = '';
+  startSession(code, 'waiting'); startHeartbeat();
+};
+
+async function tryJoin(id) {
+  if (joining) return;
+  const nick = $('nick').value.trim();
+  if (!nick) return toast('본인의 닉네임을 입력해주세요!');
+  joining = true;
+  try {
+    if (!(await ensureProfile(nick))) return;
+    const { data:room } = await sb.from('rooms').select('*').eq('id', id).maybeSingle();
+    if (!room) { toast('존재하지 않는 방입니다.'); return fetchRooms(); }
+    const alive = room.host_seen_at && Date.now() - new Date(room.host_seen_at).getTime() < ALIVE;
+    if (room.status !== 'waiting' || room.winner || !alive) { toast('이미 시작되었거나 닫힌 방입니다.'); return fetchRooms(); }
+    if (room.black_player === myNickname) return toast('자신이 만든 방에는 입장할 수 없습니다.');
+    if (room.is_private) {
+      const pw = await askPassword(room.title || `${room.black_player}의 방`);
+      if (pw === null) return;
+      if (await hashPw(pw, room.room_code) !== room.password_hash) return toast('비밀번호가 틀렸습니다.');
+    }
+    const { data:rows, error } = await sb.from('rooms')
+      .update({ status:'playing', white_player:myNickname, white_trophy:myTrophy })
+      .eq('id', id).eq('status', 'waiting').select();
+    if (error || !rows || !rows.length) { toast('다른 사람이 먼저 입장했을 수 있어요.'); return fetchRooms(); }
+
+    roomId = room.id; roomTitle = room.title || `${room.black_player}의 방`;
+    myColor = 'white'; gameMode = 'online'; oppName = room.black_player || '상대방'; oppTrophy = room.black_trophy || 100;
+    startSession(room.room_code, 'playing');
+  } finally { joining = false; }
+}
+
+$('join').onclick = async () => {
+  const code = $('code').value.trim().toUpperCase();
+  if (!code) return toast('방 코드를 입력해주세요.');
+  const { data } = await sb.from('rooms').select('id').eq('room_code', code).maybeSingle();
+  if (!data) return toast('존재하지 않는 방입니다.');
+  tryJoin(data.id);
+};
+
+function startSession(code, status) {
+  stopPolling();
+  $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+  $('room-info').textContent = `${roomTitle} · 코드 ${code}`;
+  roomStatus = status; wantRematch = false; prevWinner = null; rs = null; pending = null;
+  $('result').classList.add('hidden');
+  const rb = $('rm-btn'); rb.textContent = '🔄 재대결 요청'; rb.disabled = false; $('rm-msg').textContent = '';
+  updateCards(); initBoard(); loadRoom(); subscribe();
+}
+
+function updateCards() {
+  const stone = c => 'si ' + c;
+  $('my-nm').textContent = myNickname;
+  $('my-tro').textContent = `🏆 ${myTrophy} 트로피`;
+  $('my-tier').textContent = getTier(myTrophy);
+  $('my-si').className = stone(myColor || 'black');
+  if (gameMode === 'ai') {
+    $('opp-nm').textContent = `🤖 AI (${AI_LBL[aiLevel]})`; $('opp-tro').textContent = '승리 시 +10 🏆' + (rs ? ` · 🎒 아이템 ${rs.inv[aiColor].length}개` : ''); $('opp-tier').textContent = 'AI';
+    $('opp-si').className = stone(aiColor); return;
+  }
+  const oc = oppOf(myColor);
+  $('opp-si').className = stone(oc);
+  if (oppName) {
+    $('opp-nm').textContent = oppName; $('opp-tier').textContent = getTier(oppTrophy);
+    $('opp-tro').textContent = `🏆 ${oppTrophy} 트로피` + (rs ? ` · 🎒 아이템 ${rs.inv[oc].length}개` : '');
+  } else { $('opp-nm').textContent = '상대 입장 대기 중...'; $('opp-tier').textContent = '대기'; $('opp-tro').textContent = ''; }
+}
+
+async function loadRoom() {
+  const { data:r } = await sb.from('rooms').select('*').eq('id', roomId).single();
+  if (r) {
+    currentTurn = r.turn || 'black'; roomStatus = r.status || 'waiting'; rs = r.item_mode ? r.state : null;
+    if (r.winner) handleGameOver(r.winner, false); else $('result').classList.add('hidden');
+    oppName = (myColor === 'black' ? r.white_player : r.black_player) || '';
+    oppTrophy = (myColor === 'black' ? r.white_trophy : r.black_trophy) || 100;
+  }
+  await syncBoard(); updateCards(); updateTurnUI(); renderItems();
+}
+
+function subscribe() {
+  if (movesSub) sb.removeChannel(movesSub);
+  if (roomSub) sb.removeChannel(roomSub);
+
+  movesSub = sb.channel(`moves-${roomId}`).on('postgres_changes',
+    { event:'INSERT', schema:'public', table:'moves', filter:`room_id=eq.${roomId}` }, p => {
+      const m = p.new;
+      if (boardState[m.row][m.col]) return;
+      boardState[m.row][m.col] = m.color; renderStone(m.row, m.col, m.color);
+      if (m.color !== 'block') checkWin(m.row, m.col, m.color);
+    }).subscribe();
+
+  roomSub = sb.channel(`rooms-${roomId}`).on('postgres_changes',
+    { event:'UPDATE', schema:'public', table:'rooms', filter:`id=eq.${roomId}` }, p => {
+      const u = p.new; if (!u) return;
+      currentTurn = u.turn || 'black'; roomStatus = u.status || 'waiting';
+
+      if (u.state) {
+        const o = rs; rs = u.state;
+        if (o && o.v !== rs.v && rs.msg) toast(rs.msg);
+        const fx = o && rs.fx && (!o.fx || o.fx.k !== rs.fx.k) ? rs.fx : null;
+        if (fx) playFx(fx.t, fx.r, fx.c);
+        if (o && o.b !== rs.b) setTimeout(syncBoard, fx && fx.t === 'bomb' ? 500 : 0);
+      }
+      if (!u.winner) {
+        if (prevWinner) { prevWinner = null; $('result').classList.add('hidden'); wantRematch = false; syncBoard(); }
+        myColor = u.black_player === myNickname ? 'black' : 'white';
+      } else if ($('result').classList.contains('hidden')) handleGameOver(u.winner, true);
+
+      if (u.turn === 'rematch_wait' && !wantRematch) $('rm-msg').textContent = '✨ 상대방이 재대결을 원합니다!';
+      oppName = (myColor === 'black' ? u.white_player : u.black_player) || '';
+      oppTrophy = (myColor === 'black' ? u.white_trophy : u.black_trophy) || 100;
+      updateCards(); updateTurnUI(); renderItems();
+    }).subscribe();
+}
+
+async function requestRematch() {
+  if (gameMode === 'ai') return startAi(myColor === 'black' ? 'white' : 'black');
+  const { data:room } = await sb.from('rooms').select('*').eq('id', roomId).single();
+  if (!room) return;
+  if (!wantRematch && room.turn !== 'rematch_wait') {
+    wantRematch = true; $('rm-btn').textContent = '수락 대기 중...'; $('rm-btn').disabled = true;
+    $('rm-msg').textContent = '상대방의 수락을 기다리는 중...';
+    await sb.from('rooms').update({ turn:'rematch_wait' }).eq('id', roomId);
+  } else {
+    await sb.from('moves').delete().eq('room_id', roomId);
+    const nb = room.white_player, nw = room.black_player;
+    await sb.from('rooms').update({
+      turn:'black', winner:null, black_player:nb, white_player:nw,
+      black_trophy: nb === myNickname ? myTrophy : oppTrophy, white_trophy: nw === myNickname ? myTrophy : oppTrophy,
+      state: room.item_mode ? newState() : null
+    }).eq('id', roomId);
+    myColor = nb === myNickname ? 'black' : 'white';
+    $('result').classList.add('hidden'); wantRematch = false; prevWinner = null; boardState = empty(); initBoard();
+  }
+}
+
+// ===== 타이머 / 상태 =====
+function resetTimer() {
+  clearInterval(timerI);
+  if (!oppName || roomStatus !== 'playing' || (gameMode === 'ai' && aiOver)) { $('my-tm').textContent = $('opp-tm').textContent = '--'; return; }
+  timeLeft = 30; showTimer();
+  timerI = setInterval(() => { timeLeft--; showTimer(); if (timeLeft <= 0) { clearInterval(timerI); if (currentTurn === myColor) toast('시간 초과!'); } }, 1000);
+}
+function showTimer() {
+  const mine = currentTurn === myColor;
+  $('my-tm').textContent = mine ? timeLeft : '--'; $('opp-tm').textContent = mine ? '--' : timeLeft;
+}
+
+function updateTurnUI() {
+  resetTimer();
+  const s = $('status'), ready = oppName && roomStatus === 'playing', mine = currentTurn === myColor;
+  $('my-card').classList.toggle('turn', !!ready && mine);
+  $('opp-card').classList.toggle('turn', !!ready && !mine);
+  if (!mine && pending) setPending(null);
+  s.className = '';
+  if (!ready) s.textContent = '상대방의 입장을 기다리는 중...';
+  else if (mine) { s.textContent = '내 차례입니다!'; s.className = 'me'; }
+  else s.textContent = gameMode === 'ai' ? '🤖 AI가 생각 중...' : '상대방의 차례를 기다리는 중...';
+}
+
+// ===== 아이템 UI =====
+function renderItems() {
+  const bar = $('items'), hint = $('hint');
+  if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); return; }
+  bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
+  const inv = rs.inv[myColor];
+  for (let k = 0; k < 3; k++) {
+    const it = ITEMS[inv[k]], b = h('button', 'slot' + (it ? '' : ' empty') + (it && pending === inv[k] ? ' on' : '') + (it && k >= prevInv ? ' pop' : ''));
+    if (it) { b.appendChild(h('span', 'ico', it.i)); b.appendChild(h('span', '', it.n)); b.onclick = () => pickItem(inv[k]); }
+    else b.appendChild(h('span', 'ico', '·'));
+    bar.appendChild(b);
+  }
+  prevInv = inv.length;
+  hint.textContent = rs.dbl[myColor] ? '⚡ 연속 착수 중! 돌을 두 번 놓을 수 있어요' : pending ? ITEMS[pending].d : '돌 3개를 놓을 때마다 아이템을 얻어요 (최대 3개, 턴당 1회 사용)';
+}
+
+function playFx(t, r, c) {
+  const layer = $('fx'), wrap = layer.parentNode, lr = layer.getBoundingClientRect();
+  const cell = $('board').querySelector(`[data-row='${r}'][data-col='${c}']`);
+  const add = (cls, x, y, txt) => { const e = h('div', 'fx ' + cls, txt); e.style.left = x + 'px'; e.style.top = y + 'px'; layer.appendChild(e); setTimeout(() => e.remove(), 900); return e; };
+  const burst = (x, y, cols, n) => { for (let i = 0; i < n; i++) { const a = Math.PI * 2 * i / n + Math.random(), d = 35 + Math.random() * 45, e = add('pt', x, y); e.style.setProperty('--dx', Math.cos(a) * d + 'px'); e.style.setProperty('--dy', Math.sin(a) * d + 'px'); e.style.setProperty('--c', cols[i % cols.length]); } };
+  const shake = () => { wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake'); };
+  let x = lr.width / 2, y = lr.height / 2;
+  if (cell) { const cr = cell.getBoundingClientRect(); x = cr.left - lr.left + cr.width / 2; y = cr.top - lr.top + cr.height / 2; }
+  if (t === 'bomb') {
+    const st = cell && cell.querySelector('.st'); if (st) st.classList.add('boom');
+    add('ring', x, y); add('em', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c'], 14); shake();
+  } else if (t === 'block') {
+    setTimeout(() => { add('ring dust', x, y); burst(x, y, ['#a88b5c', '#7a6a58'], 8); shake(); }, 300);
+  } else if (t === 'double') {
+    add('flash', 0, 0); add('em', lr.width / 2, lr.height / 2, '⚡'); burst(lr.width / 2, lr.height / 2, ['#ffd166', '#ffffff'], 16);
+  }
+}
+
+function setPending(t) {
+  pending = t;
+  $('board').className = t === 'bomb' ? 'tg-' + oppOf(myColor) : '';
+  renderItems();
+}
+
+async function commitItem(item, extra) {
+  const s = structuredClone(rs);
+  s.inv[myColor].splice(s.inv[myColor].indexOf(item), 1);
+  s.u = 1; s.v++; s.msg = `${myNickname}: ${ITEMS[item].i} ${ITEMS[item].n} 사용!`;
+  if (extra) extra(s);
+  const old = rs; rs = s;
+  if (gameMode === 'online') {
+    const { error } = await sb.from('rooms').update({ state:s }).eq('id', roomId);
+    if (error) { rs = old; return toast('아이템 사용 실패: ' + error.message); }
+  } else toast(s.msg);
+  setPending(null); updateCards();
+}
+
+async function pickItem(t) {
+  if (roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
+  if (rs.u) return toast('이번 턴에는 이미 아이템을 썼어요.');
+  if (t === 'double') { playFx('double'); return commitItem('double', s => { s.dbl[myColor] = 1; s.fx = { k:Date.now(), t:'double' }; }); }
+  setPending(pending === t ? null : t);
+  if (pending) toast(ITEMS[t].d);
+}
+
+async function useCellItem(r, c) {
+  const t = pending;
+  if (t === 'bomb') {
+    if (boardState[r][c] !== oppOf(myColor)) return toast('상대 돌을 선택하세요!');
+    fxBusy = true; setTimeout(() => fxBusy = false, 700);
+    setPending(null); playFx('bomb', r, c); await sleep(480);
+    if (gameMode === 'ai') { boardState[r][c] = null; redrawLocal(); return commitItem('bomb'); }
+    const { error } = await sb.from('moves').delete().eq('room_id', roomId).eq('row', r).eq('col', c);
+    if (error) return toast('실패: ' + error.message);
+    boardState[r][c] = null; syncBoard();
+    commitItem('bomb', s => { s.b++; s.fx = { k:Date.now(), t:'bomb', r, c }; });
+  } else if (t === 'block') {
+    if (boardState[r][c] !== null) return toast('빈 칸을 선택하세요!');
+    if (gameMode === 'ai') { boardState[r][c] = 'block'; renderStone(r, c, 'block'); playFx('block', r, c); return commitItem('block'); }
+    const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:'block' }]);
+    if (error) return toast('실패: ' + error.message);
+    playFx('block', r, c); commitItem('block', s => { s.fx = { k:Date.now(), t:'block', r, c }; });
+  }
+}
+
+// ===== 착수 / 승리 =====
+async function handleCell(r, c) {
+  if (fxBusy) return;
+  if (gameMode === 'ai') {
+    if (aiOver || aiThinking) return;
+    if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
+    if (pending) return useCellItem(r, c);
+    if (boardState[r][c] !== null) return;
+    const dbl = rs && rs.dbl[myColor];
+    if (rs) {
+      rs.u = 0; rs.n[myColor]++;
+      if (dbl) rs.dbl[myColor] = 0;
+      if (rs.n[myColor] % 3 === 0 && rs.inv[myColor].length < 3) { rs.inv[myColor].push(rnd()); toast('🎁 아이템 획득!'); }
+    }
+    const ended = placeAi(r, c, myColor);
+    if (!ended) { if (dbl) { currentTurn = myColor; updateTurnUI(); } else aiMove(); }
+    renderItems(); updateCards();
+    return;
+  }
+  if (!roomId) return;
+  if (!oppName || roomStatus !== 'playing') return toast('아직 상대방이 입장하지 않았습니다!');
+  if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
+  if (pending) return useCellItem(r, c);
+  if (boardState[r][c] !== null) return;
+
+  let next = oppOf(myColor), s = null;
+  if (rs) {
+    s = structuredClone(rs); s.u = 0; s.v++; s.msg = ''; s.fx = null; s.n[myColor]++;
+    if (s.dbl[myColor]) { s.dbl[myColor] = 0; next = myColor; }
+    if (s.n[myColor] % 3 === 0 && s.inv[myColor].length < 3) { s.inv[myColor].push(rnd()); s.msg = `🎁 ${myNickname} 아이템 획득!`; }
+  }
+  const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:myColor }]);
+  if (error) return toast('착수 실패: ' + error.message);
+  const upd = { turn:next }; if (s) upd.state = s;
+  if (s) rs = s;
+  await sb.from('rooms').update(upd).eq('id', roomId);
+}
+
+function countLine(r, c, dr, dc, color) {
+  let n = 0; r += dr; c += dc;
+  while (r >= 0 && r < 15 && c >= 0 && c < 15 && boardState[r][c] === color) { n++; r += dr; c += dc; }
+  return n;
+}
+function isFive(r, c, color) {
+  return [[0,1],[1,0],[1,1],[1,-1]].some(([dr, dc]) => 1 + countLine(r, c, dr, dc, color) + countLine(r, c, -dr, -dc, color) >= 5);
+}
+async function checkWin(r, c, color) {
+  if (isFive(r, c, color)) { clearInterval(timerI); await sb.from('rooms').update({ winner:color }).eq('id', roomId); }
+}
+
+function handleGameOver(win, apply = true) {
+  clearInterval(timerI); prevWinner = win;
+  $('result').classList.remove('hidden');
+  const ai = gameMode === 'ai', me = win === myColor, draw = win === 'draw';
+  const diff = $('r-diff'), title = $('r-title');
+  if (ai) { $('rm-btn').textContent = '🔄 한 판 더 (색 교대)'; $('rm-btn').disabled = false; $('rm-msg').textContent = ''; }
+  if (apply) {
+    if (draw || (!me && ai)) { diff.textContent = '변동 없음'; diff.style.color = 'var(--mu)'; }
+    else if (me) {
+      const g = ai ? AI_WIN : 30; myTrophy += g; diff.textContent = `+${g} 트로피`; diff.style.color = 'var(--gold)';
+      confetti({ particleCount:150, spread:80, origin:{ y:0.6 } });
+    } else { myTrophy = Math.max(0, myTrophy - 20); diff.textContent = '-20 트로피'; diff.style.color = 'var(--red)'; }
+    saveTrophy();
+  }
+  if (draw) { title.textContent = '무승부'; title.style.color = 'var(--mu)'; $('r-desc').textContent = '판이 가득 찼습니다.'; }
+  else if (me) { title.textContent = '🏆 승리!'; title.style.color = 'var(--gold)'; $('r-desc').textContent = ai ? 'AI를 제압했습니다!' : '상대를 제압했습니다!'; }
+  else { title.textContent = '패배...'; title.style.color = 'var(--mu)'; $('r-desc').textContent = '아쉽네요. 다음 기회에 도전하세요!'; }
+  updateCards(); updateLobby();
+}
+
+$('leave').onclick = async () => {
+  if (gameMode === 'online' && roomId && roomStatus === 'waiting' && myColor === 'black') {
+    clearInterval(hbTimer);
+    try { await sb.from('rooms').update({ host_seen_at:null }).eq('id', roomId).eq('status', 'waiting'); } catch (e) {}
+  }
+  location.reload();
+};
+
+// ===== AI 대전 =====
+$('ai-go').onclick = async () => {
+  const nick = $('nick').value.trim();
+  if (!nick) return toast('본인의 닉네임을 입력해주세요!');
+  if (!(await ensureProfile(nick))) return;
+  aiLevel = $('ai-lv').value; aiItemMode = $('ai-item').checked; startAi('black');
+};
+
+function startAi(color) {
+  stopPolling(); gameMode = 'ai'; roomId = null; rs = aiItemMode ? newState() : null; pending = null;
+  myColor = color; aiColor = oppOf(color); oppName = `AI (${AI_LBL[aiLevel]})`;
+  roomStatus = 'playing'; currentTurn = 'black'; aiOver = false; aiThinking = false; boardState = empty();
+  $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+  $('room-info').textContent = `AI 대전 · ${AI_LBL[aiLevel]}${aiItemMode ? ' · ⚡아이템' : ''} · 승리 시 +${AI_WIN}🏆`;
+  $('result').classList.add('hidden'); $('rm-msg').textContent = '';
+  renderItems(); updateCards(); initBoard(); updateTurnUI();
+  if (aiColor === 'black') aiMove();
+}
+
+function placeAi(r, c, color) {
+  boardState[r][c] = color; renderStone(r, c, color); currentTurn = oppOf(color);
+  if (isFive(r, c, color)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(color, true), 400); return true; }
+  if (boardState.every(row => row.every(x => x !== null))) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver('draw', true), 400); return true; }
+  updateTurnUI(); return false;
+}
+
+function redrawLocal() {
+  initBoard();
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c]) renderStone(r, c, boardState[r][c], true);
+}
+
+function maxThreat(col) {
+  let best = { s:0, r:7, c:7 };
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++)
+    if (boardState[r][c] === null && near(r, c, 2)) { const s = evalCell(r, c, col); if (s > best.s) best = { s, r, c }; }
+  return best;
+}
+
+// AI가 아이템을 쓸지 판단하고 사용한다. 연속착수를 썼으면 true
+async function aiUseItem() {
+  if (!rs) return false;
+  const inv = rs.inv[aiColor];
+  if (!inv.length || Math.random() < { easy:.5, normal:.2, hard:0 }[aiLevel]) return false;
+  const th = maxThreat(myColor), mine = maxThreat(aiColor).s;
+  if (mine >= 100000) return false;
+  let use = null;
+  if (th.s >= 1200 && inv.includes('bomb')) use = 'bomb';
+  else if (th.s >= 1200 && inv.includes('block')) use = 'block';
+  else if (mine >= 1200 && inv.includes('double')) use = 'double';
+  if (!use) return false;
+
+  if (use === 'bomb') {
+    let pick = null, low = Infinity;
+    for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === myColor) {
+      boardState[r][c] = null; const t = maxThreat(myColor).s; boardState[r][c] = myColor;
+      if (t < low) { low = t; pick = [r, c]; }
+    }
+    if (!pick) return false;
+    playFx('bomb', pick[0], pick[1]); await sleep(480); boardState[pick[0]][pick[1]] = null; redrawLocal();
+  } else if (use === 'block') {
+    boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
+  }
+  inv.splice(inv.indexOf(use), 1);
+  toast(`🤖 AI: ${ITEMS[use].i} ${ITEMS[use].n} 사용!`);
+  if (use === 'double') { playFx('double'); await sleep(350); }
+  return use === 'double';
+}
+
+function aiMove() {
+  aiThinking = true;
+  setTimeout(async () => {
+    if (aiOver) { aiThinking = false; return; }
+    const dbl = await aiUseItem();
+    let ended = false;
+    for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
+    if (rs && !ended) {
+      rs.n[aiColor]++;
+      if (rs.n[aiColor] % 3 === 0 && rs.inv[aiColor].length < 3) rs.inv[aiColor].push(rnd());
+      updateCards();
+    }
+    aiThinking = false;
+  }, 500);
+}
+
+const inB = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
+function near(r, c, d) {
+  for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inB(r + i, c + j) && boardState[r + i][c + j] !== null) return true;
+  return false;
+}
+function lineScore(r, c, dr, dc, color) {
+  let n = 1, open = 0, a = r + dr, b = c + dc;
+  while (inB(a, b) && boardState[a][b] === color) { n++; a += dr; b += dc; }
+  if (inB(a, b) && boardState[a][b] === null) open++;
+  a = r - dr; b = c - dc;
+  while (inB(a, b) && boardState[a][b] === color) { n++; a -= dr; b -= dc; }
+  if (inB(a, b) && boardState[a][b] === null) open++;
+  if (n >= 5) return 100000;
+  if (n === 4) return open === 2 ? 10000 : open === 1 ? 1500 : 0;
+  if (n === 3) return open === 2 ? 1200 : open === 1 ? 150 : 0;
+  if (n === 2) return open === 2 ? 120 : open === 1 ? 15 : 0;
+  return open === 2 ? 3 : open;
+}
+const evalCell = (r, c, col) => [[0,1],[1,0],[1,1],[1,-1]].reduce((t, [dr, dc]) => t + lineScore(r, c, dr, dc, col), 0);
+
+function pickAi() {
+  if (boardState.every(row => row.every(x => x === null))) return [7, 7];
+  const list = [];
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
+    if (boardState[r][c] !== null || !near(r, c, 2)) continue;
+    list.push({ r, c, s: evalCell(r, c, aiColor) * 1.1 + evalCell(r, c, myColor) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.1 });
+  }
+  if (!list.length) { for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === null) return [r, c]; }
+  list.sort((a, b) => b.s - a.s);
+  let p = list[0];
+  if (list[0].s < 10000) {
+    if (aiLevel === 'easy' && Math.random() < 0.4) p = list[Math.floor(Math.random() * Math.min(6, list.length))];
+    else if (aiLevel === 'normal' && list.length > 1 && Math.random() < 0.2) p = list[1];
+  }
+  return [p.r, p.c];
+}
+
+initAuth().then(startPolling);
+</script>
 </body>
 </html>
