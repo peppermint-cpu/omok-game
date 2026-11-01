@@ -76,8 +76,10 @@
 
         let currentRoomId = null;
         let myColor = null; // 'black' 또는 'white'
+        let currentTurn = 'black'; // 서버 기준 현재 턴
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
         let movesSubscription = null;
+        let roomSubscription = null;
 
         const lobbyScreen = document.getElementById('lobby-screen');
         const gameScreen = document.getElementById('game-screen');
@@ -103,7 +105,7 @@
             }
         }
 
-        // 방 만들기 버튼
+        // 방 만들기 버튼 (방장 = 흑돌)
         document.getElementById('create-room-btn').addEventListener('click', async () => {
             const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             
@@ -120,10 +122,11 @@
 
             currentRoomId = data.id;
             myColor = 'black';
+            currentTurn = 'black';
             startGameSession(newRoomCode, '흑돌 (당신)');
         });
 
-        // 방 입장하기 버튼
+        // 방 입장하기 버튼 (참여자 = 백돌)
         document.getElementById('join-room-btn').addEventListener('click', async () => {
             const code = roomCodeInput.value.trim().toUpperCase();
             if (!code) {
@@ -144,10 +147,11 @@
 
             currentRoomId = data.id;
             myColor = 'white';
+            currentTurn = data.turn || 'black';
             
             await supabaseClient.from('rooms').update({ status: 'playing' }).eq('id', currentRoomId);
             
-            startGameSession(code, '백돌 (상대방)');
+            startGameSession(code, '백돌 (당신)');
         });
 
         function startGameSession(code, roleText) {
@@ -158,12 +162,24 @@
             statusMsg.textContent = '게임이 시작되었습니다!';
             
             initBoardUI();
-            loadExistingMoves();
+            loadExistingData();
             subscribeToRealtime();
         }
 
-        // 기존 수 불러오기 및 턴 동기화
-        async function loadExistingMoves() {
+        // 기존 판 상태 및 턴 불러오기
+        async function loadExistingData() {
+            // 1. 방 정보 (현재 턴) 가져오기
+            const { data: roomData } = await supabaseClient
+                .from('rooms')
+                .select('turn')
+                .eq('id', currentRoomId)
+                .single();
+            
+            if (roomData) {
+                currentTurn = roomData.turn;
+            }
+
+            // 2. 기존 착수 기록 가져오기
             const { data, error } = await supabaseClient
                 .from('moves')
                 .select('*')
@@ -176,18 +192,18 @@
                     boardState[move.row][move.col] = move.color;
                     renderStone(move.row, move.col, move.color);
                 });
-                updateTurnState(data.length);
             }
+            updateTurnUI();
         }
 
-        // 실시간 구독 설정 (채널 이름 유니크하게 수정하여 반영 누락 방지)
+        // 실시간 구독 (moves 테이블과 rooms 테이블 동시 감지)
         function subscribeToRealtime() {
-            if (movesSubscription) {
-                supabaseClient.removeChannel(movesSubscription);
-            }
+            if (movesSubscription) supabaseClient.removeChannel(movesSubscription);
+            if (roomSubscription) supabaseClient.removeChannel(roomSubscription);
 
+            // 돌 놓임 감지
             movesSubscription = supabaseClient
-                .channel(`room-${currentRoomId}`)
+                .channel(`moves-${currentRoomId}`)
                 .on('postgres_changes', { 
                     event: 'INSERT', 
                     schema: 'public', 
@@ -195,46 +211,67 @@
                     filter: `room_id=eq.${currentRoomId}` 
                 }, payload => {
                     const newMove = payload.new;
-                    // 이미 그려진 곳이 아닐 때만 처리
                     if (!boardState[newMove.row][newMove.col]) {
                         boardState[newMove.row][newMove.col] = newMove.color;
                         renderStone(newMove.row, newMove.col, newMove.color);
                         
-                        // 현재 총 착수 수 계산 후 턴 갱신
-                        const totalMoves = boardState.flat().filter(cell => cell !== null).length;
-                        updateTurnState(totalMoves);
+                        // 턴 교체
+                        currentTurn = (newMove.color === 'black') ? 'white' : 'black';
+                        updateTurnUI();
                         
                         checkWinCondition(newMove.row, newMove.col, newMove.color);
                     }
                 })
                 .subscribe();
+
+            // 방 상태(턴) 변경 감지
+            roomSubscription = supabaseClient
+                .channel(`rooms-${currentRoomId}`)
+                .on('postgres_changes', { 
+                    event: 'UPDATE', 
+                    schema: 'public', 
+                    table: 'rooms', 
+                    filter: `id=eq.${currentRoomId}` 
+                }, payload => {
+                    if (payload.new && payload.new.turn) {
+                        currentTurn = payload.new.turn;
+                        updateTurnUI();
+                    }
+                })
+                .subscribe();
         }
 
-        // 돌 클릭 이벤트
+        // 돌 클릭 (착수)
         async function handleCellClick(r, c) {
             if (!currentRoomId) return;
-            
-            const totalMoves = boardState.flat().filter(cell => cell !== null).length;
-            const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
 
             // 내 차례 검증
-            if (currentTurnColor !== myColor) {
+            if (currentTurn !== myColor) {
                 alert('지금은 내 차례가 아닙니다!');
                 return;
             }
 
             if (boardState[r][c] !== null) {
-                return; // 이미 돌이 있는 자리
+                return; // 이미 돌이 있는 곳
             }
 
-            // DB에 수 기록 (Realtime 구독을 통해 양쪽 화면에 자동 반영됨)
-            const { error } = await supabaseClient
+            const nextTurn = (myColor === 'black') ? 'white' : 'black';
+
+            // 1. DB에 착수 기록 추가
+            const { error: moveError } = await supabaseClient
                 .from('moves')
                 .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
 
-            if (error) {
-                alert('착수 실패: ' + error.message);
+            if (moveError) {
+                alert('착수 실패: ' + moveError.message);
+                return;
             }
+
+            // 2. 방 정보의 턴을 다음 사람으로 업데이트
+            await supabaseClient
+                .from('rooms')
+                .update({ turn: nextTurn })
+                .eq('id', currentRoomId);
         }
 
         function renderStone(r, c, color) {
@@ -246,16 +283,13 @@
             cell.appendChild(stone);
         }
 
-        function updateTurnState(totalMoves) {
-            const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
-            const isMyTurn = (currentTurnColor === myColor);
-            
-            if (isMyTurn) {
+        function updateTurnUI() {
+            if (currentTurn === myColor) {
                 turnIndicator.textContent = '내 차례입니다!';
-                turnIndicator.className = 'text-amber-400 font-bold';
+                turnIndicator.className = 'text-amber-400 font-bold text-base';
             } else {
                 turnIndicator.textContent = '상대방 차례입니다...';
-                turnIndicator.className = 'text-slate-300';
+                turnIndicator.className = 'text-slate-300 text-base';
             }
         }
 
