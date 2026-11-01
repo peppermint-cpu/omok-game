@@ -23,14 +23,21 @@
     <!-- 승리/패배 오버레이 화면 -->
     <div id="result-overlay" class="fixed inset-0 bg-black/80 z-50 hidden flex flex-col items-center justify-center p-6 backdrop-blur-sm transition-all">
         <div id="result-title" class="text-6xl font-black mb-4 tracking-wider animate-bounce">승리!</div>
-        <div id="result-desc" class="text-xl text-slate-300 mb-8 text-center">상대를 제압하고 승리하였습니다!</div>
-        <div id="trophy-change-box" class="bg-slate-800 border border-slate-700 px-6 py-4 rounded-2xl text-center mb-8 shadow-xl">
+        <div id="result-desc" class="text-xl text-slate-300 mb-6 text-center">상대를 제압하고 승리하였습니다!</div>
+        <div id="trophy-change-box" class="bg-slate-800 border border-slate-700 px-6 py-3 rounded-2xl text-center mb-6 shadow-xl">
             <span class="text-sm text-slate-400 block mb-1">트로피 변동</span>
             <span id="trophy-diff" class="text-2xl font-bold text-amber-400">+30 트로피</span>
         </div>
-        <button onclick="location.reload()" class="px-8 py-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-2xl shadow-lg transition text-lg">
-            로비로 돌아가기
-        </button>
+
+        <div class="w-full max-w-xs flex flex-col gap-3">
+            <div id="rematch-status-msg" class="text-sm text-amber-300 text-center font-medium min-h-[20px]"></div>
+            <button id="rematch-btn" onclick="requestRematch()" class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-base">
+                🔄 재대결 요청
+            </button>
+            <button onclick="location.reload()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl transition text-sm border border-slate-700">
+                로비로 돌아가기
+            </button>
+        </div>
     </div>
 
     <!-- 헤더 -->
@@ -49,7 +56,6 @@
 
         <!-- 대기실 / 방 선택 화면 -->
         <div id="lobby-screen" class="w-full bg-slate-800 p-6 rounded-2xl shadow-xl flex flex-col gap-4">
-            <!-- 로비 내 본인 프로필 카드 (트로피 & 급수 표시) -->
             <div class="bg-slate-900 border border-slate-700 p-4 rounded-xl flex items-center justify-between">
                 <div>
                     <div class="text-xs text-slate-400 mb-0.5">내 계정 정보</div>
@@ -74,10 +80,9 @@
             </div>
         </div>
 
-        <!-- 게임 플레이 화면 (기본 숨김) -->
+        <!-- 게임 플레이 화면 -->
         <div id="game-screen" class="w-full hidden flex flex-col items-center gap-3">
             
-            <!-- 상대방 네임 카드 (상단) -->
             <div id="opponent-card" class="w-full bg-slate-800/80 border border-slate-700 p-3 rounded-xl flex items-center justify-between shadow-md">
                 <div class="flex items-center gap-3">
                     <div id="opp-stone-icon" class="w-6 h-6 rounded-full bg-white border border-slate-400 shadow"></div>
@@ -92,14 +97,10 @@
                 <div id="opp-timer" class="text-xs font-mono text-slate-400">--s</div>
             </div>
 
-            <!-- 오목판 컨테이너 -->
             <div class="w-full aspect-square bg-amber-600 p-3 rounded-xl shadow-2xl relative flex items-center justify-center border-4 border-amber-800">
-                <div id="omok-board" class="board-grid w-full h-full relative cursor-pointer">
-                    <!-- 자바스크립트로 교차점 생성 -->
-                </div>
+                <div id="omok-board" class="board-grid w-full h-full relative cursor-pointer"></div>
             </div>
 
-            <!-- 본인 네임 카드 (하단) -->
             <div id="my-card" class="w-full bg-slate-800 border-2 border-amber-500/60 p-3 rounded-xl flex items-center justify-between shadow-md">
                 <div class="flex items-center gap-3">
                     <div id="my-stone-icon" class="w-6 h-6 rounded-full bg-black shadow"></div>
@@ -122,7 +123,6 @@
 
     </main>
 
-    <!-- 푸터 -->
     <footer class="w-full max-w-md text-center text-xs text-slate-500 py-2">
         Supabase Realtime Multiplayer Omok
     </footer>
@@ -141,7 +141,6 @@
         let roomStatus = 'waiting';
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
         
-        // 트로피 시스템 (브라우저 로컬스토리지에 계정별 영구 연동)
         let myTrophy = parseInt(localStorage.getItem('omok_trophy') || '100');
         let oppTrophy = 100;
 
@@ -149,6 +148,7 @@
         let roomSubscription = null;
         let timerInterval = null;
         let timeLeft = 30;
+        let hasRequestedRematch = false;
 
         const lobbyScreen = document.getElementById('lobby-screen');
         const gameScreen = document.getElementById('game-screen');
@@ -158,7 +158,6 @@
         const roomInfoDisplay = document.getElementById('room-info-display');
         const customToast = document.getElementById('custom-toast');
 
-        // 요청하신 8단계 세부 급수 체계 함수
         function getTier(trophy) {
             if (trophy >= 1000) return '👑 오목의 신';
             if (trophy >= 800) return '🔮 마스터';
@@ -170,7 +169,6 @@
             return '🥉 브론즈';
         }
 
-        // 로비 화면 정보 초기 반영
         function updateLobbyUI() {
             document.getElementById('lobby-trophy-display').textContent = `🏆 ${myTrophy} 트로피`;
             document.getElementById('lobby-tier-display').textContent = getTier(myTrophy);
@@ -193,7 +191,6 @@
                     cell.className = 'relative flex items-center justify-center w-full h-full border border-amber-800/40';
                     cell.dataset.row = r;
                     cell.dataset.col = c;
-                    
                     cell.addEventListener('click', () => handleCellClick(r, c));
                     boardEl.appendChild(cell);
                 }
@@ -218,7 +215,8 @@
                     status: 'waiting', 
                     turn: 'black',
                     black_player: myNickname,
-                    black_trophy: myTrophy
+                    black_trophy: myTrophy,
+                    winner: null
                 }])
                 .select()
                 .single();
@@ -278,7 +276,15 @@
             gameScreen.classList.remove('hidden');
             roomInfoDisplay.textContent = `방 코드: ${code}`;
             roomStatus = initialStatus;
+            hasRequestedRematch = false;
             
+            document.getElementById('result-overlay').classList.add('hidden');
+            const rematchBtn = document.getElementById('rematch-btn');
+            rematchBtn.textContent = '🔄 재대결 요청';
+            rematchBtn.disabled = false;
+            rematchBtn.className = 'w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-base';
+            document.getElementById('rematch-status-msg').textContent = '';
+
             updatePlayerCards();
             initBoardUI();
             loadExistingData();
@@ -315,8 +321,10 @@
                 currentTurn = roomData.turn || 'black';
                 roomStatus = roomData.status || 'waiting';
                 
-                if (roomData.winner) {
-                    handleGameOver(roomData.winner);
+                if (!roomData.winner) {
+                    document.getElementById('result-overlay').classList.add('hidden');
+                } else {
+                    handleGameOver(roomData.winner, false);
                 }
 
                 if (myColor === 'black') {
@@ -367,6 +375,15 @@
                         checkWinCondition(newMove.row, newMove.col, newMove.color);
                     }
                 })
+                .on('postgres_changes', { 
+                    event: 'DELETE', 
+                    schema: 'public', 
+                    table: 'moves', 
+                    filter: `room_id=eq.${currentRoomId}` 
+                }, () => {
+                    boardState = Array(15).fill(null).map(() => Array(15).fill(null));
+                    initBoardUI();
+                })
                 .subscribe();
 
             roomSubscription = supabaseClient
@@ -381,9 +398,20 @@
                     if (updated) {
                         currentTurn = updated.turn || 'black';
                         roomStatus = updated.status || 'waiting';
-                        
-                        if (updated.winner) {
-                            handleGameOver(updated.winner);
+
+                        // 재대결로 winner가 null이 되고 흑백 역할이 교체된 경우
+                        if (!updated.winner) {
+                            document.getElementById('result-overlay').classList.add('hidden');
+                            myColor = (updated.black_player === myNickname) ? 'black' : 'white';
+                            hasRequestedRematch = false;
+                            updatePlayerCards();
+                        } else if (updated.winner && document.getElementById('result-overlay').classList.contains('hidden')) {
+                            handleGameOver(updated.winner, true);
+                        }
+
+                        // 상대방이 재대결을 요청한 상태 감지 (turn에 'rematch_' 문구가 포함될 때)
+                        if (updated.turn === 'rematch_wait' && !hasRequestedRematch) {
+                            document.getElementById('rematch-status-msg').textContent = '✨ 상대방이 재대결을 원합니다!';
                         }
 
                         if (myColor === 'black') {
@@ -398,6 +426,59 @@
                     }
                 })
                 .subscribe();
+        }
+
+        async function requestRematch() {
+            const rematchBtn = document.getElementById('rematch-btn');
+            const rematchMsg = document.getElementById('rematch-status-msg');
+
+            const { data: currentRoom } = await supabaseClient
+                .from('rooms')
+                .select('*')
+                .eq('id', currentRoomId)
+                .single();
+
+            if (!currentRoom) return;
+
+            if (!hasRequestedRematch && currentRoom.turn !== 'rematch_wait') {
+                // 첫 번째 요청자
+                hasRequestedRematch = true;
+                rematchBtn.textContent = '수락 대기 중...';
+                rematchBtn.disabled = true;
+                rematchBtn.className = 'w-full py-3.5 bg-slate-700 text-slate-400 font-bold rounded-xl shadow-lg cursor-not-allowed text-base';
+                rematchMsg.textContent = '상대방의 수락을 기다리는 중...';
+
+                await supabaseClient
+                    .from('rooms')
+                    .update({ turn: 'rematch_wait' })
+                    .eq('id', currentRoomId);
+            } else {
+                // 상대방이 이미 요청한 상태에서 내가 누름 -> 수락 완료! 판 비우고 역할 교대 후 재시작
+                await supabaseClient
+                    .from('moves')
+                    .delete()
+                    .eq('room_id', currentRoomId);
+
+                const newBlack = currentRoom.white_player;
+                const newWhite = currentRoom.black_player;
+
+                await supabaseClient
+                    .from('rooms')
+                    .update({
+                        turn: 'black',
+                        winner: null,
+                        black_player: newBlack,
+                        white_player: newWhite,
+                        black_trophy: (newBlack === myNickname) ? myTrophy : oppTrophy,
+                        white_trophy: (newWhite === myNickname) ? myTrophy : oppTrophy
+                    })
+                    .eq('id', currentRoomId);
+
+                myColor = (newBlack === myNickname) ? 'black' : 'white';
+                document.getElementById('result-overlay').classList.add('hidden');
+                hasRequestedRematch = false;
+                initBoardUI();
+            }
         }
 
         function resetTimer() {
@@ -526,7 +607,7 @@
             }
         }
 
-        function handleGameOver(winnerColor) {
+        function handleGameOver(winnerColor, applyTrophy = true) {
             clearInterval(timerInterval);
             const overlay = document.getElementById('result-overlay');
             const resultTitle = document.getElementById('result-title');
@@ -537,31 +618,35 @@
 
             const isMeWinner = (winnerColor === myColor);
 
-            if (isMeWinner) {
-                resultTitle.textContent = '🏆 승리!';
-                resultTitle.className = 'text-6xl font-black mb-4 tracking-wider text-amber-400 animate-bounce';
-                resultDesc.textContent = '상대를 제압하고 승리하였습니다!';
-                
-                myTrophy += 30;
-                trophyDiff.textContent = '+30 트로피';
-                trophyDiff.className = 'text-2xl font-bold text-amber-400';
+            if (applyTrophy) {
+                if (isMeWinner) {
+                    myTrophy += 30;
+                    trophyDiff.textContent = '+30 트로피';
+                    trophyDiff.className = 'text-2xl font-bold text-amber-400';
 
-                confetti({
-                    particleCount: 150,
-                    spread: 80,
-                    origin: { y: 0.6 }
-                });
-            } else {
-                resultTitle.textContent = '패배...';
-                resultTitle.className = 'text-6xl font-black mb-4 tracking-wider text-slate-500';
-                resultDesc.textContent = '아쉽게 패배했습니다. 다음 기회에 도전하세요!';
-                
-                myTrophy = Math.max(0, myTrophy - 20);
-                trophyDiff.textContent = '-20 트로피';
-                trophyDiff.className = 'text-2xl font-bold text-red-400';
+                    confetti({
+                        particleCount: 150,
+                        spread: 80,
+                        origin: { y: 0.6 }
+                    });
+                } else {
+                    myTrophy = Math.max(0, myTrophy - 20);
+                    trophyDiff.textContent = '-20 트로피';
+                    trophyDiff.className = 'text-2xl font-bold text-red-400';
+                }
+                localStorage.setItem('omok_trophy', myTrophy);
             }
 
-            localStorage.setItem('omok_trophy', myTrophy);
+            if (isMeWinner) {
+                resultTitle.textContent = '🏆 승리!';
+                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-amber-400 animate-bounce';
+                resultDesc.textContent = '상대를 제압하고 승리하였습니다!';
+            } else {
+                resultTitle.textContent = '패배...';
+                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-slate-500';
+                resultDesc.textContent = '아쉽게 패배했습니다. 다음 기회에 도전하세요!';
+            }
+
             updatePlayerCards();
             updateLobbyUI();
         }
