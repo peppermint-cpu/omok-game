@@ -3,202 +3,288 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>실시간 멀티플레이 오목</title>
+    <title>실시간 멀티 오목</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <!-- Supabase JS SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background: #f0f0f0; margin: 0; padding: 20px; }
-        h1 { margin-bottom: 10px; }
-        #status { font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; color: #333; }
-        #controls { margin-bottom: 15px; display: flex; gap: 10px; }
-        input, button { padding: 8px 12px; font-size: 1rem; }
-        #board-container { position: relative; background: #e3a857; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border-radius: 4px; padding: 15px; }
-        canvas { background: #e3a857; cursor: pointer; display: block; }
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(15, minmax(0, 1fr));
+            grid-template-rows: repeat(15, minmax(0, 1fr));
+        }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center justify-between p-4">
 
-    <h1>⚫ 실시간 오목 ⚪</h1>
-    <div id="status">닉네임을 입력하고 방을 만들거나 참여하세요.</div>
-    
-    <div id="controls">
-        <input type="text" id="username" placeholder="닉네임 입력" value="Player1">
-        <button onclick="createRoom()">방 만들기</button>
-        <input type="text" id="roomIdInput" placeholder="방 ID 입력">
-        <button onclick="joinRoom()">참여하기</button>
-    </div>
+    <!-- 헤더 -->
+    <header class="w-full max-w-md text-center py-2">
+        <h1 class="text-2xl font-bold text-amber-400">실시간 오목 대국</h1>
+        <p id="status-msg" class="text-sm text-slate-400 mt-1">방을 만들거나 코드를 입력해 입장하세요.</p>
+    </header>
 
-    <div id="board-container">
-        <canvas id="omokCanvas" width="450" height="450"></canvas>
-    </div>
+    <!-- 메인 컨텐츠 영역 -->
+    <main class="w-full max-w-md flex flex-col items-center flex-grow justify-center">
+        
+        <!-- 대기실 / 방 선택 화면 -->
+        <div id="lobby-screen" class="w-full bg-slate-800 p-6 rounded-2xl shadow-xl flex flex-col gap-4">
+            <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
+                방 만들기 (흑돌)
+            </button>
+            <div class="flex gap-2">
+                <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest">
+                <button id="join-room-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl transition shadow-lg">
+                    입장 (백돌)
+                </button>
+            </div>
+        </div>
 
-<script>
-    // -------------------------------------------------------------
-    // 1. Supabase 설정 (여기에 본인의 키를 넣으세요!)
-    // -------------------------------------------------------------
-    const SUPABASE_URL = "https://lunsgjjznfhfbtfcvoye.supabase.co";
-    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"; // <-- 이 부분을 Supabase Publishable key로 변경
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        <!-- 게임 플레이 화면 (기본 숨김) -->
+        <div id="game-screen" class="w-full hidden flex flex-col items-center gap-3">
+            <div class="flex justify-between w-full px-2 text-sm font-semibold">
+                <span id="player-role" class="text-amber-400">역할: 대기 중</span>
+                <span id="turn-indicator" class="text-slate-300">차례 확인 중...</span>
+            </div>
+            
+            <!-- 모바일 최적화 오목판 컨테이너 -->
+            <div class="w-full aspect-square bg-amber-700 p-2 rounded-xl shadow-2xl relative flex items-center justify-center">
+                <div id="omok-board" class="board-grid w-full h-full bg-amber-600 relative cursor-pointer">
+                    <!-- 자바스크립트로 교차점 생성 -->
+                </div>
+            </div>
 
-    // -------------------------------------------------------------
-    // 2. 게임 변수 초기화
-    // -------------------------------------------------------------
-    const BOARD_SIZE = 15;
-    const CELL_SIZE = 30;
-    const canvas = document.getElementById("omokCanvas");
-    const ctx = canvas.getContext("2d");
-    
-    let board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
-    let currentRoomId = null;
-    let myColor = null; 
-    let currentTurn = 'black';
-    let myName = '';
-    let isGameActive = false;
+            <div class="flex justify-between w-full px-2 text-xs text-slate-400">
+                <span id="room-info-display">방 코드: -</span>
+                <button id="leave-btn" class="text-red-400 hover:underline">나가기</button>
+            </div>
+        </div>
 
-    // -------------------------------------------------------------
-    // 3. 오목판 그리기
-    // -------------------------------------------------------------
-    function drawBoard() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 1;
+    </main>
 
-        for (let i = 0; i < BOARD_SIZE; i++) {
-            ctx.beginPath();
-            ctx.moveTo(15, 15 + i * CELL_SIZE);
-            ctx.lineTo(435, 15 + i * CELL_SIZE);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(15 + i * CELL_SIZE, 15);
-            ctx.lineTo(15 + i * CELL_SIZE, 435);
-            ctx.stroke();
-        }
+    <!-- 푸터 -->
+    <footer class="w-full max-w-md text-center text-xs text-slate-500 py-2">
+        Supabase Realtime Multiplayer Omok
+    </footer>
 
-        for (let x = 0; x < BOARD_SIZE; x++) {
-            for (let y = 0; y < BOARD_SIZE; y++) {
-                if (board[x][y]) {
-                    ctx.beginPath();
-                    ctx.arc(15 + x * CELL_SIZE, 15 + y * CELL_SIZE, 13, 0, Math.PI * 2);
-                    ctx.fillStyle = board[x][y] === 'black' ? '#000' : '#fff';
-                    ctx.fill();
-                    ctx.strokeStyle = '#333';
-                    ctx.stroke();
+    <!-- 로직 스크립트 -->
+    <script>
+        // ======= [SUPABASE 설정] =======
+        const SUPABASE_URL = 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co'; // 본인 URL로 수정
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // 본인 ANON KEY로 수정
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let currentRoomId = null;
+        let myColor = null; // 'black' 또는 'white'
+        let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
+        let isMyTurn = false;
+        let gameActive = false;
+        let movesSubscription = null;
+
+        const lobbyScreen = document.getElementById('lobby-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const boardEl = document.getElementById('omok-board');
+        const statusMsg = document.getElementById('status-msg');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const playerRoleEl = document.getElementById('player-role');
+        const roomCodeInput = document.getElementById('room-code-input');
+        const roomInfoDisplay = document.getElementById('room-info-display');
+
+        // 오목판 그리드 생성 함수
+        function initBoardUI() {
+            boardEl.innerHTML = '';
+            for (let r = 0; r < 15; r++) {
+                for (let c = 0; c < 15; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'relative flex items-center justify-center w-full h-full';
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+
+                    // 바둑판 선 그리기 시각 효과
+                    const lineInner = document.createElement('div');
+                    lineInner.className = 'absolute inset-0 pointer-events-none';
+                    // 십자선 CSS 가공 생략 (단순 클릭 영역 확보)
+                    
+                    cell.addEventListener('click', () => handleCellClick(r, c));
+                    boardEl.appendChild(cell);
                 }
             }
         }
-    }
-    drawBoard();
 
-    // -------------------------------------------------------------
-    // 4. 방 생성 및 입장 로직
-    // -------------------------------------------------------------
-    async function createRoom() {
-        myName = document.getElementById("username").value || "Player1";
-        const { data, error } = await supabase.from('rooms').insert([
-            { player_black: myName, status: 'waiting' }
-        ]).select().single();
+        // 방 만들기 버튼
+        document.getElementById('create-room-btn').addEventListener('click', async () => {
+            const newRoomCode = Math.random().toString(36.substring(2, 8)).toUpperCase();
+            
+            const { data, error } = await supabaseClient
+                .from('rooms')
+                .insert([{ room_code: newRoomCode, status: 'waiting', turn: 'black' }])
+                .select()
+                .single();
 
-        if (error) return alert("방 생성 실패: " + error.message);
-
-        currentRoomId = data.id;
-        myColor = 'black';
-        document.getElementById("status").innerText = `방 생성 완료! (방 ID: ${currentRoomId}) 상대방 대기 중...`;
-        subscribeToRoom();
-    }
-
-    async function joinRoom() {
-        myName = document.getElementById("username").value || "Player2";
-        const roomId = document.getElementById("roomIdInput").value.trim();
-        if (!roomId) return alert("방 ID를 입력하세요.");
-
-        const { data, error } = await supabase.from('rooms').update({
-            player_white: myName,
-            status: 'playing'
-        }).eq('id', roomId).select().single();
-
-        if (error || !data) return alert("방 참여 실패. ID를 확인하세요.");
-
-        currentRoomId = roomId;
-        myColor = 'white';
-        isGameActive = true;
-        document.getElementById("status").innerText = `게임 시작! 당신은 백돌(⚪)입니다. (흑돌 턴)`;
-        subscribeToRoom();
-        loadExistingMoves();
-    }
-
-    // -------------------------------------------------------------
-    // 5. Supabase Realtime 구독
-    // -------------------------------------------------------------
-    function subscribeToRoom() {
-        supabase.channel(`room:${currentRoomId}`)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'moves', filter: `room_id=eq.${currentRoomId}` }, payload => {
-                const move = payload.new;
-                board[move.x][move.y] = move.color;
-                currentTurn = move.color === 'black' ? 'white' : 'black';
-                drawBoard();
-
-                if (checkWin(move.x, move.y, move.color)) {
-                    isGameActive = false;
-                    document.getElementById("status").innerText = `🎉 게임 종료! ${move.color === 'black' ? '흑돌' : '백돌'} 승리!`;
-                } else {
-                    document.getElementById("status").innerText = `현재 턴: ${currentTurn === 'black' ? '흑돌(⚫)' : '백돌(⚪)'} ${currentTurn === myColor ? '(내 턴!)' : ''}`;
-                }
-            })
-            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${currentRoomId}` }, payload => {
-                if (payload.new.status === 'playing' && myColor === 'black') {
-                    isGameActive = true;
-                    document.getElementById("status").innerText = `상대방(${payload.new.player_white}) 입장! 게임 시작! (당신의 턴입니다⚫)`;
-                }
-            })
-            .subscribe();
-    }
-
-    async function loadExistingMoves() {
-        const { data } = await supabase.from('moves').select('*').eq('room_id', currentRoomId);
-        if (data) {
-            data.forEach(m => { board[m.x][m.y] = m.color; });
-            drawBoard();
-        }
-    }
-
-    // -------------------------------------------------------------
-    // 6. 착수 처리
-    // -------------------------------------------------------------
-    canvas.addEventListener('click', async (e) => {
-        if (!isGameActive || currentTurn !== myColor) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const x = Math.round((e.clientX - rect.left - 15) / CELL_SIZE);
-        const y = Math.round((e.clientY - rect.top - 15) / CELL_SIZE);
-
-        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE || board[x][y] !== null) return;
-
-        await supabase.from('moves').insert([
-            { room_id: currentRoomId, x: x, y: y, color: myColor }
-        ]);
-    });
-
-    // -------------------------------------------------------------
-    // 7. 승리 판정
-    // -------------------------------------------------------------
-    function checkWin(x, y, color) {
-        const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
-        for (let [dx, dy] of dirs) {
-            let count = 1;
-            for (let i = 1; i < 5; i++) {
-                let nx = x + dx * i, ny = y + dy * i;
-                if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && board[nx][ny] === color) count++;
-                else break;
+            if (error) {
+                alert('방 생성 실패: ' + error.message);
+                return;
             }
-            for (let i = 1; i < 5; i++) {
-                let nx = x - dx * i, ny = y - dy * i;
-                if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && board[nx][ny] === color) count++;
-                else break;
+
+            currentRoomId = data.id;
+            myColor = 'black';
+            startGameSession(newRoomCode, '흑돌 (당신 차례)');
+        });
+
+        // 방 입장하기 버튼
+        document.getElementById('join-room-btn').addEventListener('click', async () => {
+            const code = roomCodeInput.value.trim().toUpperCase();
+            if (!code) {
+                alert('방 코드를 입력해주세요.');
+                return;
             }
-            if (count >= 5) return true;
+
+            const { data, error } = await supabaseClient
+                .from('rooms')
+                .select('*')
+                .eq('room_code', code)
+                .single();
+
+            if (error || !data) {
+                alert('존재하지 않는 방이거나 코드가 잘못되었습니다.');
+                return;
+            }
+
+            currentRoomId = data.id;
+            myColor = 'white';
+            
+            // 상태를 playing으로 업데이트
+            await supabaseClient.from('rooms').update({ status: 'playing' }).eq('id', currentRoomId);
+            
+            startGameSession(code, '백돌 (상대방 차례)');
+        });
+
+        function startGameSession(code, roleText) {
+            lobbyScreen.classList.add('hidden');
+            gameScreen.classList.remove('hidden');
+            roomInfoDisplay.textContent = `방 코드: ${code}`;
+            playerRoleEl.textContent = `역할: ${roleText}`;
+            statusMsg.textContent = '게임이 시작되었습니다!';
+            
+            initBoardUI();
+            loadExistingMoves();
+            subscribeToRealtime();
         }
-        return false;
-    }
-</script>
+
+        // 기존 수 불러오기
+        async function loadExistingMoves() {
+            const { data, error } = await supabaseClient
+                .from('moves')
+                .select('*')
+                .eq('room_id', currentRoomId)
+                .order('created_at', { ascending: true });
+
+            if (!error && data) {
+                data.forEach(move => {
+                    boardState[move.row][move.col] = move.color;
+                    renderStone(move.row, move.col, move.color);
+                });
+                updateTurnState(data.length);
+            }
+        }
+
+        // 실시간 구독 설정
+        function subscribeToRealtime() {
+            movesSubscription = supabaseClient
+                .channel('public:moves')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'moves', filter: `room_id=eq.${currentRoomId}` }, payload => {
+                    const newMove = payload.new;
+                    boardState[newMove.row][newMove.col] = newMove.color;
+                    renderStone(newMove.row, newMove.col, newMove.color);
+                    
+                    // 턴 전환 체크
+                    isMyTurn = (newMove.color !== myColor);
+                    turnIndicator.textContent = isMyTurn ? '내 차례입니다!' : '상대방 차례입니다...';
+                    
+                    checkWinCondition(newMove.row, newMove.col, newMove.color);
+                })
+                .subscribe();
+        }
+
+        // 돌 클릭 이벤트
+        async function handleCellClick(r, c) {
+            if (!currentRoomId) return;
+            
+            // 내 차례 검증 (흑은 홀수/짝수 턴 계산, 백은 반대)
+            const totalMoves = boardState.flat().filter(cell => cell !== null).length;
+            const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
+
+            if (currentTurnColor !== myColor) {
+                alert('상대방 차례입니다!');
+                return;
+            }
+
+            if (boardState[r][c] !== null) {
+                return; // 이미 돌이 있는 경우
+            }
+
+            // DB에 수 기록
+            const { error } = await supabaseClient
+                .from('moves')
+                .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
+
+            if (error) {
+                alert('착수 실패: ' + error.message);
+            }
+        }
+
+        function renderStone(r, c, color) {
+            const cell = boardEl.querySelector(`[data-row='${r}'][data-col='${c}']`);
+            if (!cell) return;
+            cell.innerHTML = '';
+            const stone = document.createElement('div');
+            stone.className = `w-4/5 h-4/5 rounded-full shadow-md ${color === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
+            cell.appendChild(stone);
+        }
+
+        function updateTurnState(totalMoves) {
+            const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
+            isMyTurn = (currentTurnColor === myColor);
+            turnIndicator.textContent = isMyTurn ? '내 차례입니다!' : '상대방 차례입니다...';
+        }
+
+        // 간단 승리 판정 예시 (오목 5목 체크)
+        function checkWinCondition(r, c, color) {
+            const directions = [
+                { dr: 0, dc: 1 },  // 가로
+                { dr: 1, dc: 0 },  // 세로
+                { dr: 1, dc: 1 },  // 대각선 우하
+                { dr: 1, dc: -1 }  // 대각선 좌하
+            ];
+
+            for (let { dr, dc } of directions) {
+                let count = 1;
+                count += countConsecutive(r, c, dr, dc, color);
+                count += countConsecutive(r, c, -dr, -dc, color);
+
+                if (count >= 5) {
+                    alert(`[${color.toUpperCase()} 승리!] 게임이 종료되었습니다.`);
+                    location.reload();
+                    return;
+                }
+            }
+        }
+
+        function countConsecutive(r, c, dr, dc, color) {
+            let count = 0;
+            let nr = r + dr;
+            let nc = c + dc;
+            while (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && boardState[nr][nc] === color) {
+                count++;
+                nr += dr;
+                nc += dc;
+            }
+            return count;
+        }
+
+        document.getElementById('leave-btn').addEventListener('click', () => {
+            location.reload();
+        });
+    </script>
 </body>
 </html>
