@@ -47,7 +47,7 @@
                 <span id="turn-indicator" class="text-slate-300">차례 확인 중...</span>
             </div>
             
-            <!-- 모바일 최적화 오목판 컨테이너 (격자선 명확히 표시) -->
+            <!-- 오목판 컨테이너 -->
             <div class="w-full aspect-square bg-amber-600 p-3 rounded-xl shadow-2xl relative flex items-center justify-center border-4 border-amber-800">
                 <div id="omok-board" class="board-grid w-full h-full relative cursor-pointer">
                     <!-- 자바스크립트로 교차점 생성 -->
@@ -75,9 +75,8 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentRoomId = null;
-        let myColor = null; 
+        let myColor = null; // 'black' 또는 'white'
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-        let isMyTurn = false;
         let movesSubscription = null;
 
         const lobbyScreen = document.getElementById('lobby-screen');
@@ -89,13 +88,11 @@
         const roomCodeInput = document.getElementById('room-code-input');
         const roomInfoDisplay = document.getElementById('room-info-display');
 
-        // 오목판 그리드 및 칸 선 생성 함수 (칸이 눈에 띄도록 테두리 추가)
         function initBoardUI() {
             boardEl.innerHTML = '';
             for (let r = 0; r < 15; r++) {
                 for (let c = 0; c < 15; c++) {
                     const cell = document.createElement('div');
-                    // 각 칸마다 얇은 테두리를 주어 칸과 선이 명확히 보이도록 수정
                     cell.className = 'relative flex items-center justify-center w-full h-full border border-amber-800/40';
                     cell.dataset.row = r;
                     cell.dataset.col = c;
@@ -123,7 +120,7 @@
 
             currentRoomId = data.id;
             myColor = 'black';
-            startGameSession(newRoomCode, '흑돌 (당신 차례)');
+            startGameSession(newRoomCode, '흑돌 (당신)');
         });
 
         // 방 입장하기 버튼
@@ -150,7 +147,7 @@
             
             await supabaseClient.from('rooms').update({ status: 'playing' }).eq('id', currentRoomId);
             
-            startGameSession(code, '백돌 (상대방 차례)');
+            startGameSession(code, '백돌 (상대방)');
         });
 
         function startGameSession(code, roleText) {
@@ -165,6 +162,7 @@
             subscribeToRealtime();
         }
 
+        // 기존 수 불러오기 및 턴 동기화
         async function loadExistingMoves() {
             const { data, error } = await supabaseClient
                 .from('moves')
@@ -173,6 +171,7 @@
                 .order('created_at', { ascending: true });
 
             if (!error && data) {
+                boardState = Array(15).fill(null).map(() => Array(15).fill(null));
                 data.forEach(move => {
                     boardState[move.row][move.col] = move.color;
                     renderStone(move.row, move.col, move.color);
@@ -181,50 +180,60 @@
             }
         }
 
+        // 실시간 구독 설정 (채널 이름 유니크하게 수정하여 반영 누락 방지)
         function subscribeToRealtime() {
+            if (movesSubscription) {
+                supabaseClient.removeChannel(movesSubscription);
+            }
+
             movesSubscription = supabaseClient
-                .channel('public:moves')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'moves', filter: `room_id=eq.${currentRoomId}` }, payload => {
+                .channel(`room-${currentRoomId}`)
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'moves', 
+                    filter: `room_id=eq.${currentRoomId}` 
+                }, payload => {
                     const newMove = payload.new;
-                    boardState[newMove.row][newMove.col] = newMove.color;
-                    renderStone(newMove.row, newMove.col, newMove.color);
-                    
-                    const totalMoves = boardState.flat().filter(cell => cell !== null).length;
-                    updateTurnState(totalMoves);
-                    
-                    checkWinCondition(newMove.row, newMove.col, newMove.color);
+                    // 이미 그려진 곳이 아닐 때만 처리
+                    if (!boardState[newMove.row][newMove.col]) {
+                        boardState[newMove.row][newMove.col] = newMove.color;
+                        renderStone(newMove.row, newMove.col, newMove.color);
+                        
+                        // 현재 총 착수 수 계산 후 턴 갱신
+                        const totalMoves = boardState.flat().filter(cell => cell !== null).length;
+                        updateTurnState(totalMoves);
+                        
+                        checkWinCondition(newMove.row, newMove.col, newMove.color);
+                    }
                 })
                 .subscribe();
         }
 
+        // 돌 클릭 이벤트
         async function handleCellClick(r, c) {
             if (!currentRoomId) return;
             
             const totalMoves = boardState.flat().filter(cell => cell !== null).length;
             const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
 
+            // 내 차례 검증
             if (currentTurnColor !== myColor) {
-                alert('상대방 차례가 아닙니다!');
+                alert('지금은 내 차례가 아닙니다!');
                 return;
             }
 
             if (boardState[r][c] !== null) {
-                return; // 이미 돌이 있는 경우
+                return; // 이미 돌이 있는 자리
             }
 
-            // 즉시 로컬 상태 먼저 반영 (터치 반응 속도 개선)
-            boardState[r][c] = myColor;
-            renderStone(r, c, myColor);
-            updateTurnState(totalMoves + 1);
-
-            // DB에 수 기록
+            // DB에 수 기록 (Realtime 구독을 통해 양쪽 화면에 자동 반영됨)
             const { error } = await supabaseClient
                 .from('moves')
                 .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
 
             if (error) {
                 alert('착수 실패: ' + error.message);
-                // 실패 시 복구 로직 필요시 추가
             }
         }
 
@@ -239,8 +248,15 @@
 
         function updateTurnState(totalMoves) {
             const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
-            isMyTurn = (currentTurnColor === myColor);
-            turnIndicator.textContent = isMyTurn ? '내 차례입니다!' : '상대방 차례입니다...';
+            const isMyTurn = (currentTurnColor === myColor);
+            
+            if (isMyTurn) {
+                turnIndicator.textContent = '내 차례입니다!';
+                turnIndicator.className = 'text-amber-400 font-bold';
+            } else {
+                turnIndicator.textContent = '상대방 차례입니다...';
+                turnIndicator.className = 'text-slate-300';
+            }
         }
 
         function checkWinCondition(r, c, color) {
