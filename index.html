@@ -69,9 +69,9 @@
 
     <!-- 로직 스크립트 -->
     <script>
-        // ======= [SUPABASE 설정] =======
-        const SUPABASE_URL = 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co'; // 본인 URL로 수정
-        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // 본인 ANON KEY로 수정
+        // ======= [SUPABASE 설정 (입력 완료)] =======
+        const SUPABASE_URL = 'https://lunsgjjznfhfbtfcvoye.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB';
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentRoomId = null;
@@ -99,11 +99,6 @@
                     cell.className = 'relative flex items-center justify-center w-full h-full';
                     cell.dataset.row = r;
                     cell.dataset.col = c;
-
-                    // 바둑판 선 그리기 시각 효과
-                    const lineInner = document.createElement('div');
-                    lineInner.className = 'absolute inset-0 pointer-events-none';
-                    // 십자선 CSS 가공 생략 (단순 클릭 영역 확보)
                     
                     cell.addEventListener('click', () => handleCellClick(r, c));
                     boardEl.appendChild(cell);
@@ -113,7 +108,7 @@
 
         // 방 만들기 버튼
         document.getElementById('create-room-btn').addEventListener('click', async () => {
-            const newRoomCode = Math.random().toString(36.substring(2, 8)).toUpperCase();
+            const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             
             const { data, error } = await supabaseClient
                 .from('rooms')
@@ -153,7 +148,6 @@
             currentRoomId = data.id;
             myColor = 'white';
             
-            // 상태를 playing으로 업데이트
             await supabaseClient.from('rooms').update({ status: 'playing' }).eq('id', currentRoomId);
             
             startGameSession(code, '백돌 (상대방 차례)');
@@ -171,7 +165,6 @@
             subscribeToRealtime();
         }
 
-        // 기존 수 불러오기
         async function loadExistingMoves() {
             const { data, error } = await supabaseClient
                 .from('moves')
@@ -188,7 +181,6 @@
             }
         }
 
-        // 실시간 구독 설정
         function subscribeToRealtime() {
             movesSubscription = supabaseClient
                 .channel('public:moves')
@@ -197,7 +189,6 @@
                     boardState[newMove.row][newMove.col] = newMove.color;
                     renderStone(newMove.row, newMove.col, newMove.color);
                     
-                    // 턴 전환 체크
                     isMyTurn = (newMove.color !== myColor);
                     turnIndicator.textContent = isMyTurn ? '내 차례입니다!' : '상대방 차례입니다...';
                     
@@ -206,11 +197,9 @@
                 .subscribe();
         }
 
-        // 돌 클릭 이벤트
         async function handleCellClick(r, c) {
             if (!currentRoomId) return;
             
-            // 내 차례 검증 (흑은 홀수/짝수 턴 계산, 백은 반대)
             const totalMoves = boardState.flat().filter(cell => cell !== null).length;
             const currentTurnColor = (totalMoves % 2 === 0) ? 'black' : 'white';
 
@@ -220,10 +209,9 @@
             }
 
             if (boardState[r][c] !== null) {
-                return; // 이미 돌이 있는 경우
+                return;
             }
 
-            // DB에 수 기록
             const { error } = await supabaseClient
                 .from('moves')
                 .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
@@ -248,7 +236,6 @@
             turnIndicator.textContent = isMyTurn ? '내 차례입니다!' : '상대방 차례입니다...';
         }
 
-        // 간단 승리 판정 예시 (오목 5목 체크)
         function checkWinCondition(r, c, color) {
             const directions = [
                 { dr: 0, dc: 1 },  // 가로
