@@ -21,19 +21,29 @@
     <!-- 헤더 -->
     <header class="w-full max-w-md text-center py-2">
         <h1 class="text-2xl font-bold text-amber-400">실시간 오목 대국</h1>
-        <p id="status-msg" class="text-sm text-slate-400 mt-1">방을 만들거나 코드를 입력해 입장하세요.</p>
+        <p id="top-status-msg" class="text-sm text-slate-400 mt-1">닉네임을 입력하고 방을 만들거나 입장하세요.</p>
     </header>
 
     <!-- 메인 컨텐츠 영역 -->
-    <main class="w-full max-w-md flex flex-col items-center flex-grow justify-center">
+    <main class="w-full max-w-md flex flex-col items-center flex-grow justify-center gap-3">
         
+        <!-- 커스텀 알림 배너 (alert 대체용 깔끔한 UI) -->
+        <div id="custom-toast" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 px-4 py-2 rounded-xl text-center text-sm shadow-lg hidden transition-all duration-300">
+            알림 메시지 공간
+        </div>
+
         <!-- 대기실 / 방 선택 화면 -->
         <div id="lobby-screen" class="w-full bg-slate-800 p-6 rounded-2xl shadow-xl flex flex-col gap-4">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">플레이어 닉네임</label>
+                <input type="text" id="nickname-input" placeholder="본인 닉네임 입력" maxlength="10" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
+            </div>
+            <hr class="border-slate-700">
             <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
                 방 만들기 (흑돌)
             </button>
             <div class="flex gap-2">
-                <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest">
+                <input type="text" id="room-code-input" placeholder="참여 코드 입력" class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center uppercase tracking-widest font-bold">
                 <button id="join-room-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl transition shadow-lg">
                     입장 (백돌)
                 </button>
@@ -42,11 +52,19 @@
 
         <!-- 게임 플레이 화면 (기본 숨김) -->
         <div id="game-screen" class="w-full hidden flex flex-col items-center gap-3">
-            <div class="flex justify-between w-full px-2 text-sm font-semibold">
-                <span id="player-role" class="text-amber-400">역할: 대기 중</span>
-                <span id="turn-indicator" class="text-slate-300">차례 확인 중...</span>
-            </div>
             
+            <!-- 상대방 네이버 카드 (상단) -->
+            <div id="opponent-card" class="w-full bg-slate-800/80 border border-slate-700 p-3 rounded-xl flex items-center justify-between shadow-md">
+                <div class="flex items-center gap-3">
+                    <div id="opp-stone-icon" class="w-6 h-6 rounded-full bg-white border border-slate-400 shadow"></div>
+                    <div>
+                        <div id="opp-name" class="font-bold text-sm text-slate-200">상대방 대기 중...</div>
+                        <div class="text-xs text-slate-400">상대방 플레이어</div>
+                    </div>
+                </div>
+                <div id="opp-timer" class="text-xs font-mono text-slate-400">--s</div>
+            </div>
+
             <!-- 오목판 컨테이너 -->
             <div class="w-full aspect-square bg-amber-600 p-3 rounded-xl shadow-2xl relative flex items-center justify-center border-4 border-amber-800">
                 <div id="omok-board" class="board-grid w-full h-full relative cursor-pointer">
@@ -54,7 +72,19 @@
                 </div>
             </div>
 
-            <div class="flex justify-between w-full px-2 text-xs text-slate-400">
+            <!-- 본인 네임 카드 (하단) -->
+            <div id="my-card" class="w-full bg-slate-800 border-2 border-amber-500/60 p-3 rounded-xl flex items-center justify-between shadow-md">
+                <div class="flex items-center gap-3">
+                    <div id="my-stone-icon" class="w-6 h-6 rounded-full bg-black shadow"></div>
+                    <div>
+                        <div id="my-name" class="font-bold text-sm text-amber-400">내 닉네임</div>
+                        <div class="text-xs text-amber-200/70">나 (본인)</div>
+                    </div>
+                </div>
+                <div id="my-timer" class="text-xs font-mono text-amber-400 font-bold">--s</div>
+            </div>
+
+            <div class="flex justify-between w-full px-2 text-xs text-slate-400 mt-1">
                 <span id="room-info-display">방 코드: -</span>
                 <button id="leave-btn" class="text-red-400 hover:underline">나가기</button>
             </div>
@@ -69,26 +99,39 @@
 
     <!-- 로직 스크립트 -->
     <script>
-        // ======= [SUPABASE 설정] =======
         const SUPABASE_URL = 'https://lunsgjjznfhfbtfcvoye.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB';
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentRoomId = null;
         let myColor = null; // 'black' 또는 'white'
-        let currentTurn = 'black'; // 서버 기준 현재 턴
+        let myNickname = '';
+        let opponentNickname = '';
+        let currentTurn = 'black';
+        let roomStatus = 'waiting';
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
+        
         let movesSubscription = null;
         let roomSubscription = null;
+        let timerInterval = null;
+        let timeLeft = 30; // 턴 제한시간 30초
 
         const lobbyScreen = document.getElementById('lobby-screen');
         const gameScreen = document.getElementById('game-screen');
         const boardEl = document.getElementById('omok-board');
-        const statusMsg = document.getElementById('status-msg');
-        const turnIndicator = document.getElementById('turn-indicator');
-        const playerRoleEl = document.getElementById('player-role');
+        const topStatusMsg = document.getElementById('top-status-msg');
         const roomCodeInput = document.getElementById('room-code-input');
         const roomInfoDisplay = document.getElementById('room-info-display');
+        const customToast = document.getElementById('custom-toast');
+
+        // 커스텀 토스트 메시지 출력 함수 (alert 대체)
+        function showToast(msg, duration = 2500) {
+            customToast.textContent = msg;
+            customToast.classList.remove('hidden');
+            setTimeout(() => {
+                customToast.classList.add('hidden');
+            }, duration);
+        }
 
         function initBoardUI() {
             boardEl.innerHTML = '';
@@ -105,32 +148,48 @@
             }
         }
 
-        // 방 만들기 버튼 (방장 = 흑돌)
+        // 방 만들기 (흑돌)
         document.getElementById('create-room-btn').addEventListener('click', async () => {
+            const nick = document.getElementById('nickname-input').value.trim();
+            if (!nick) {
+                showToast('본인의 닉네임을 입력해주세요!');
+                return;
+            }
+            myNickname = nick;
+            myColor = 'black';
+
             const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             
             const { data, error } = await supabaseClient
                 .from('rooms')
-                .insert([{ room_code: newRoomCode, status: 'waiting', turn: 'black' }])
+                .insert([{ 
+                    room_code: newRoomCode, 
+                    status: 'waiting', 
+                    turn: 'black',
+                    black_player: myNickname 
+                }])
                 .select()
                 .single();
 
             if (error) {
-                alert('방 생성 실패: ' + error.message);
+                showToast('방 생성 실패: ' + error.message);
                 return;
             }
 
             currentRoomId = data.id;
-            myColor = 'black';
-            currentTurn = 'black';
-            startGameSession(newRoomCode, '흑돌 (당신)');
+            startGameSession(newRoomCode, 'waiting');
         });
 
-        // 방 입장하기 버튼 (참여자 = 백돌)
+        // 방 입장하기 (백돌)
         document.getElementById('join-room-btn').addEventListener('click', async () => {
+            const nick = document.getElementById('nickname-input').value.trim();
+            if (!nick) {
+                showToast('본인의 닉네임을 입력해주세요!');
+                return;
+            }
             const code = roomCodeInput.value.trim().toUpperCase();
             if (!code) {
-                alert('방 코드를 입력해주세요.');
+                showToast('방 코드를 입력해주세요.');
                 return;
             }
 
@@ -141,45 +200,72 @@
                 .single();
 
             if (error || !data) {
-                alert('존재하지 않는 방이거나 코드가 잘못되었습니다.');
+                showToast('존재하지 않는 방이거나 코드가 잘못되었습니다.');
                 return;
             }
 
             currentRoomId = data.id;
+            myNickname = nick;
             myColor = 'white';
-            currentTurn = data.turn || 'black';
+            opponentNickname = data.black_player || '상대방';
+
+            // 방에 입장하면서 백돌 닉네임 등록 및 상태를 playing으로 변경
+            await supabaseClient
+                .from('rooms')
+                .update({ 
+                    status: 'playing',
+                    white_player: myNickname 
+                })
+                .eq('id', currentRoomId);
             
-            await supabaseClient.from('rooms').update({ status: 'playing' }).eq('id', currentRoomId);
-            
-            startGameSession(code, '백돌 (당신)');
+            startGameSession(code, 'playing');
         });
 
-        function startGameSession(code, roleText) {
+        function startGameSession(code, initialStatus) {
             lobbyScreen.classList.add('hidden');
             gameScreen.classList.remove('hidden');
             roomInfoDisplay.textContent = `방 코드: ${code}`;
-            playerRoleEl.textContent = `역할: ${roleText}`;
-            statusMsg.textContent = '게임이 시작되었습니다!';
+            roomStatus = initialStatus;
             
+            updatePlayerCards();
             initBoardUI();
             loadExistingData();
             subscribeToRealtime();
         }
 
-        // 기존 판 상태 및 턴 불러오기
+        // 네임 카드 UI 갱신 (본인 하단, 상대방 상단)
+        function updatePlayerCards() {
+            document.getElementById('my-name').textContent = myNickname;
+            document.getElementById('my-stone-icon').className = `w-6 h-6 rounded-full shadow ${myColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
+            
+            if (opponentNickname) {
+                document.getElementById('opp-name').textContent = opponentNickname;
+                const oppColor = (myColor === 'black') ? 'white' : 'black';
+                document.getElementById('opp-stone-icon').className = `w-6 h-6 rounded-full shadow ${oppColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
+            } else {
+                document.getElementById('opp-name').textContent = '상대방 입장 대기 중...';
+            }
+        }
+
         async function loadExistingData() {
-            // 1. 방 정보 (현재 턴) 가져오기
             const { data: roomData } = await supabaseClient
                 .from('rooms')
-                .select('turn')
+                .select('*')
                 .eq('id', currentRoomId)
                 .single();
             
             if (roomData) {
-                currentTurn = roomData.turn;
+                currentTurn = roomData.turn || 'black';
+                roomStatus = roomData.status || 'waiting';
+                
+                if (myColor === 'black') {
+                    opponentNickname = roomData.white_player || '';
+                } else {
+                    opponentNickname = roomData.black_player || '';
+                }
+                updatePlayerCards();
             }
 
-            // 2. 기존 착수 기록 가져오기
             const { data, error } = await supabaseClient
                 .from('moves')
                 .select('*')
@@ -196,12 +282,10 @@
             updateTurnUI();
         }
 
-        // 실시간 구독 (moves 테이블과 rooms 테이블 동시 감지)
         function subscribeToRealtime() {
             if (movesSubscription) supabaseClient.removeChannel(movesSubscription);
             if (roomSubscription) supabaseClient.removeChannel(roomSubscription);
 
-            // 돌 놓임 감지
             movesSubscription = supabaseClient
                 .channel(`moves-${currentRoomId}`)
                 .on('postgres_changes', { 
@@ -215,16 +299,13 @@
                         boardState[newMove.row][newMove.col] = newMove.color;
                         renderStone(newMove.row, newMove.col, newMove.color);
                         
-                        // 턴 교체
                         currentTurn = (newMove.color === 'black') ? 'white' : 'black';
                         updateTurnUI();
-                        
                         checkWinCondition(newMove.row, newMove.col, newMove.color);
                     }
                 })
                 .subscribe();
 
-            // 방 상태(턴) 변경 감지
             roomSubscription = supabaseClient
                 .channel(`rooms-${currentRoomId}`)
                 .on('postgres_changes', { 
@@ -233,41 +314,87 @@
                     table: 'rooms', 
                     filter: `id=eq.${currentRoomId}` 
                 }, payload => {
-                    if (payload.new && payload.new.turn) {
-                        currentTurn = payload.new.turn;
+                    const updated = payload.new;
+                    if (updated) {
+                        currentTurn = updated.turn || 'black';
+                        roomStatus = updated.status || 'waiting';
+                        
+                        if (myColor === 'black') {
+                            opponentNickname = updated.white_player || '';
+                        } else {
+                            opponentNickname = updated.black_player || '';
+                        }
+                        updatePlayerCards();
                         updateTurnUI();
                     }
                 })
                 .subscribe();
         }
 
-        // 돌 클릭 (착수)
+        // 제한시간 타이머 관리
+        function resetTimer() {
+            clearInterval(timerInterval);
+            timeLeft = 30;
+            updateTimerDisplay();
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateTimerDisplay();
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    // 시간이 다 되면 자동 패배 또는 상대 턴으로 넘김 처리
+                    if (currentTurn === myColor) {
+                        showToast('시간 초과! 턴이 넘어갑니다.');
+                    }
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const myTimerEl = document.getElementById('my-timer');
+            const oppTimerEl = document.getElementById('opp-timer');
+
+            if (currentTurn === myColor) {
+                myTimerEl.textContent = `${timeLeft}초`;
+                oppTimerEl.textContent = '--s';
+            } else {
+                myTimerEl.textContent = '--s';
+                oppTimerEl.textContent = `${timeLeft}초`;
+            }
+        }
+
         async function handleCellClick(r, c) {
             if (!currentRoomId) return;
 
-            // 내 차례 검증
+            // 1. 상대방이 아직 안 들어왔을 때 체크 (alert 대신 토스트 메시지)
+            if (!opponentNickname || roomStatus !== 'playing') {
+                showToast('아직 상대방이 입장하지 않았습니다!');
+                return;
+            }
+
+            // 2. 내 차례 검증
             if (currentTurn !== myColor) {
-                alert('지금은 내 차례가 아닙니다!');
+                showToast('지금은 내 차례가 아닙니다!');
                 return;
             }
 
             if (boardState[r][c] !== null) {
-                return; // 이미 돌이 있는 곳
+                return; 
             }
 
             const nextTurn = (myColor === 'black') ? 'white' : 'black';
 
-            // 1. DB에 착수 기록 추가
+            // DB에 착수 기록
             const { error: moveError } = await supabaseClient
                 .from('moves')
                 .insert([{ room_id: currentRoomId, row: r, col: c, color: myColor }]);
 
             if (moveError) {
-                alert('착수 실패: ' + moveError.message);
+                showToast('착수 실패: ' + moveError.message);
                 return;
             }
 
-            // 2. 방 정보의 턴을 다음 사람으로 업데이트
+            // 턴 변경 반영
             await supabaseClient
                 .from('rooms')
                 .update({ turn: nextTurn })
@@ -284,12 +411,13 @@
         }
 
         function updateTurnUI() {
+            resetTimer();
             if (currentTurn === myColor) {
-                turnIndicator.textContent = '내 차례입니다!';
-                turnIndicator.className = 'text-amber-400 font-bold text-base';
+                topStatusMsg.textContent = '내 차례입니다!';
+                topStatusMsg.className = 'text-sm text-amber-400 font-bold mt-1';
             } else {
-                turnIndicator.textContent = '상대방 차례입니다...';
-                turnIndicator.className = 'text-slate-300 text-base';
+                topStatusMsg.textContent = '상대방의 차례를 기다리는 중...';
+                topStatusMsg.className = 'text-sm text-slate-400 mt-1';
             }
         }
 
@@ -307,8 +435,9 @@
                 count += countConsecutive(r, c, -dr, -dc, color);
 
                 if (count >= 5) {
-                    alert(`[${color === 'black' ? '흑돌' : '백돌'} 승리!] 게임이 종료되었습니다.`);
-                    location.reload();
+                    clearInterval(timerInterval);
+                    showToast(`[${color === 'black' ? '흑돌' : '백돌'} 승리!] 게임이 종료됩니다.`, 4000);
+                    setTimeout(() => location.reload(), 3500);
                     return;
                 }
             }
