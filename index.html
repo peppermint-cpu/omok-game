@@ -1,4 +1,23 @@
 <!DOCTYPE html>
+<!--
+  [Supabase 설정] SQL Editor에서 한 번 실행하세요 (트로피 저장용 players 테이블)
+
+  create table if not exists public.players (
+    nickname   text primary key,
+    trophy     integer not null default 100,
+    updated_at timestamptz not null default now()
+  );
+  alter table public.players enable row level security;
+  drop policy if exists "players read"   on public.players;
+  drop policy if exists "players insert" on public.players;
+  drop policy if exists "players update" on public.players;
+  create policy "players read"   on public.players for select using (true);
+  create policy "players insert" on public.players for insert with check (true);
+  create policy "players update" on public.players for update using (true) with check (true);
+
+  [Render 배포] 이 파일을 GitHub에 올리고 New > Static Site 로 연결
+  (Build Command: 비워두기, Publish Directory: .)
+-->
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -15,6 +34,15 @@
             display: grid;
             grid-template-columns: repeat(15, minmax(0, 1fr));
             grid-template-rows: repeat(15, minmax(0, 1fr));
+        }
+        .last-dot {
+            position: absolute;
+            width: 22%;
+            height: 22%;
+            border-radius: 9999px;
+            background: #ef4444;
+            z-index: 20;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -48,7 +76,7 @@
 
     <!-- 메인 컨텐츠 영역 -->
     <main class="w-full max-w-md flex flex-col items-center flex-grow justify-center gap-3">
-        
+
         <!-- 커스텀 알림 배너 -->
         <div id="custom-toast" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 px-4 py-2 rounded-xl text-center text-sm shadow-lg hidden transition-all duration-300">
             알림 메시지 공간
@@ -68,6 +96,25 @@
                 <label class="block text-xs text-slate-400 mb-1">플레이어 닉네임</label>
                 <input type="text" id="nickname-input" placeholder="본인 닉네임 입력" maxlength="10" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl focus:outline-none focus:border-amber-500 text-center text-white font-semibold">
             </div>
+
+            <!-- AI 대전 -->
+            <div class="bg-slate-900/60 border border-emerald-600/40 rounded-xl p-3 flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-bold text-emerald-400">🤖 AI 대전</span>
+                    <span class="text-xs text-amber-300">승리 시 +10 🏆</span>
+                </div>
+                <div class="flex gap-2">
+                    <select id="ai-level-select" class="flex-grow px-3 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm font-semibold focus:outline-none focus:border-emerald-500">
+                        <option value="easy">쉬움</option>
+                        <option value="normal" selected>보통</option>
+                        <option value="hard">어려움</option>
+                    </select>
+                    <button id="ai-start-btn" class="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl transition shadow-lg text-sm">
+                        AI와 대결 (흑돌)
+                    </button>
+                </div>
+            </div>
+
             <hr class="border-slate-700">
             <button id="create-room-btn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg">
                 방 만들기 (흑돌)
@@ -82,7 +129,7 @@
 
         <!-- 게임 플레이 화면 -->
         <div id="game-screen" class="w-full hidden flex flex-col items-center gap-3">
-            
+
             <div id="opponent-card" class="w-full bg-slate-800/80 border border-slate-700 p-3 rounded-xl flex items-center justify-between shadow-md">
                 <div class="flex items-center gap-3">
                     <div id="opp-stone-icon" class="w-6 h-6 rounded-full bg-white border border-slate-400 shadow"></div>
@@ -134,13 +181,13 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentRoomId = null;
-        let myColor = null; 
+        let myColor = null;
         let myNickname = '';
         let opponentNickname = '';
         let currentTurn = 'black';
         let roomStatus = 'waiting';
         let boardState = Array(15).fill(null).map(() => Array(15).fill(null));
-        
+
         let myTrophy = parseInt(localStorage.getItem('omok_trophy') || '100');
         let oppTrophy = 100;
 
@@ -149,6 +196,15 @@
         let timerInterval = null;
         let timeLeft = 30;
         let hasRequestedRematch = false;
+
+        // ===== AI 대전 상태 =====
+        let gameMode = 'online'; // 'online' | 'ai'
+        let aiColor = 'white';
+        let aiLevel = 'normal';
+        let aiThinking = false;
+        let aiGameOver = false;
+        const AI_WIN_TROPHY = 10;
+        const AI_LEVEL_LABEL = { easy: '쉬움', normal: '보통', hard: '어려움' };
 
         const lobbyScreen = document.getElementById('lobby-screen');
         const gameScreen = document.getElementById('game-screen');
@@ -175,13 +231,60 @@
         }
         updateLobbyUI();
 
+        let toastTimer = null;
         function showToast(msg, duration = 2500) {
             customToast.textContent = msg;
             customToast.classList.remove('hidden');
-            setTimeout(() => {
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
                 customToast.classList.add('hidden');
             }, duration);
         }
+
+        // ===== Supabase 트로피 저장/불러오기 (players 테이블) =====
+        async function syncTrophy(nick) {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('players')
+                    .select('trophy')
+                    .eq('nickname', nick)
+                    .maybeSingle();
+
+                if (error) throw error;
+
+                if (data) {
+                    myTrophy = data.trophy;
+                } else {
+                    // 처음 보는 닉네임이면 현재 값으로 등록
+                    await supabaseClient
+                        .from('players')
+                        .upsert({ nickname: nick, trophy: myTrophy, updated_at: new Date().toISOString() }, { onConflict: 'nickname' });
+                }
+                localStorage.setItem('omok_trophy', myTrophy);
+            } catch (e) {
+                console.warn('트로피 동기화 실패 (players 테이블 확인 필요):', e.message || e);
+            }
+            updateLobbyUI();
+        }
+
+        async function saveTrophy() {
+            localStorage.setItem('omok_trophy', myTrophy);
+            if (!myNickname) return;
+            try {
+                const { error } = await supabaseClient
+                    .from('players')
+                    .upsert({ nickname: myNickname, trophy: myTrophy, updated_at: new Date().toISOString() }, { onConflict: 'nickname' });
+                if (error) throw error;
+            } catch (e) {
+                console.warn('트로피 저장 실패 (players 테이블 확인 필요):', e.message || e);
+            }
+        }
+
+        // 닉네임 입력 후 포커스를 벗어나면 DB에서 내 트로피를 불러온다
+        document.getElementById('nickname-input').addEventListener('change', (e) => {
+            const nick = e.target.value.trim();
+            if (nick) syncTrophy(nick);
+        });
 
         function initBoardUI() {
             boardEl.innerHTML = '';
@@ -205,14 +308,16 @@
             }
             myNickname = nick;
             myColor = 'black';
+            gameMode = 'online';
+            await syncTrophy(myNickname);
 
             const newRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-            
+
             const { data, error } = await supabaseClient
                 .from('rooms')
-                .insert([{ 
-                    room_code: newRoomCode, 
-                    status: 'waiting', 
+                .insert([{
+                    room_code: newRoomCode,
+                    status: 'waiting',
                     turn: 'black',
                     black_player: myNickname,
                     black_trophy: myTrophy,
@@ -256,18 +361,20 @@
             currentRoomId = data.id;
             myNickname = nick;
             myColor = 'white';
+            gameMode = 'online';
+            await syncTrophy(myNickname);
             opponentNickname = data.black_player || '상대방';
             oppTrophy = data.black_trophy || 100;
 
             await supabaseClient
                 .from('rooms')
-                .update({ 
+                .update({
                     status: 'playing',
                     white_player: myNickname,
                     white_trophy: myTrophy
                 })
                 .eq('id', currentRoomId);
-            
+
             startGameSession(code, 'playing');
         });
 
@@ -277,7 +384,7 @@
             roomInfoDisplay.textContent = `방 코드: ${code}`;
             roomStatus = initialStatus;
             hasRequestedRematch = false;
-            
+
             document.getElementById('result-overlay').classList.add('hidden');
             const rematchBtn = document.getElementById('rematch-btn');
             rematchBtn.textContent = '🔄 재대결 요청';
@@ -296,7 +403,16 @@
             document.getElementById('my-trophy').textContent = `🏆 ${myTrophy} 트로피`;
             document.getElementById('my-tier').textContent = getTier(myTrophy);
             document.getElementById('my-stone-icon').className = `w-6 h-6 rounded-full shadow ${myColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
-            
+
+            // AI 모드 상대 카드
+            if (gameMode === 'ai') {
+                document.getElementById('opp-name').textContent = `🤖 AI (${AI_LEVEL_LABEL[aiLevel]})`;
+                document.getElementById('opp-trophy').textContent = '🏆 승리 시 +10';
+                document.getElementById('opp-tier').textContent = 'AI';
+                document.getElementById('opp-stone-icon').className = `w-6 h-6 rounded-full shadow ${aiColor === 'black' ? 'bg-black' : 'bg-white border border-slate-400'}`;
+                return;
+            }
+
             if (opponentNickname) {
                 document.getElementById('opp-name').textContent = opponentNickname;
                 document.getElementById('opp-trophy').textContent = `🏆 ${oppTrophy} 트로피`;
@@ -316,11 +432,11 @@
                 .select('*')
                 .eq('id', currentRoomId)
                 .single();
-            
+
             if (roomData) {
                 currentTurn = roomData.turn || 'black';
                 roomStatus = roomData.status || 'waiting';
-                
+
                 if (!roomData.winner) {
                     document.getElementById('result-overlay').classList.add('hidden');
                 } else {
@@ -359,27 +475,27 @@
 
             movesSubscription = supabaseClient
                 .channel(`moves-${currentRoomId}`)
-                .on('postgres_changes', { 
-                    event: 'INSERT', 
-                    schema: 'public', 
-                    table: 'moves', 
-                    filter: `room_id=eq.${currentRoomId}` 
+                .on('postgres_changes', {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'moves',
+                    filter: `room_id=eq.${currentRoomId}`
                 }, payload => {
                     const newMove = payload.new;
                     if (!boardState[newMove.row][newMove.col]) {
                         boardState[newMove.row][newMove.col] = newMove.color;
                         renderStone(newMove.row, newMove.col, newMove.color);
-                        
+
                         currentTurn = (newMove.color === 'black') ? 'white' : 'black';
                         updateTurnUI();
                         checkWinCondition(newMove.row, newMove.col, newMove.color);
                     }
                 })
-                .on('postgres_changes', { 
-                    event: 'DELETE', 
-                    schema: 'public', 
-                    table: 'moves', 
-                    filter: `room_id=eq.${currentRoomId}` 
+                .on('postgres_changes', {
+                    event: 'DELETE',
+                    schema: 'public',
+                    table: 'moves',
+                    filter: `room_id=eq.${currentRoomId}`
                 }, () => {
                     boardState = Array(15).fill(null).map(() => Array(15).fill(null));
                     initBoardUI();
@@ -388,11 +504,11 @@
 
             roomSubscription = supabaseClient
                 .channel(`rooms-${currentRoomId}`)
-                .on('postgres_changes', { 
-                    event: 'UPDATE', 
-                    schema: 'public', 
-                    table: 'rooms', 
-                    filter: `id=eq.${currentRoomId}` 
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'rooms',
+                    filter: `id=eq.${currentRoomId}`
                 }, payload => {
                     const updated = payload.new;
                     if (updated) {
@@ -429,6 +545,12 @@
         }
 
         async function requestRematch() {
+            // AI 모드: 색을 바꿔서 바로 새 게임 시작
+            if (gameMode === 'ai') {
+                startAiGame(myColor === 'black' ? 'white' : 'black');
+                return;
+            }
+
             const rematchBtn = document.getElementById('rematch-btn');
             const rematchMsg = document.getElementById('rematch-status-msg');
 
@@ -483,7 +605,7 @@
 
         function resetTimer() {
             clearInterval(timerInterval);
-            if (!opponentNickname || roomStatus !== 'playing') {
+            if (!opponentNickname || roomStatus !== 'playing' || (gameMode === 'ai' && aiGameOver)) {
                 document.getElementById('my-timer').textContent = '--s';
                 document.getElementById('opp-timer').textContent = '--s';
                 return;
@@ -524,6 +646,21 @@
         }
 
         async function handleCellClick(r, c) {
+            // ===== AI 대전 =====
+            if (gameMode === 'ai') {
+                if (aiGameOver || aiThinking) return;
+                if (currentTurn !== myColor) {
+                    showToast('지금은 내 차례가 아닙니다!');
+                    return;
+                }
+                if (boardState[r][c] !== null) return;
+
+                const ended = placeAiModeStone(r, c, myColor);
+                if (!ended) aiMove();
+                return;
+            }
+
+            // ===== 온라인 대전 =====
             if (!currentRoomId) return;
 
             if (!opponentNickname || roomStatus !== 'playing') {
@@ -537,7 +674,7 @@
             }
 
             if (boardState[r][c] !== null) {
-                return; 
+                return;
             }
 
             const nextTurn = (myColor === 'black') ? 'white' : 'black';
@@ -564,6 +701,12 @@
             const stone = document.createElement('div');
             stone.className = `w-5/6 h-5/6 rounded-full shadow-lg z-10 ${color === 'black' ? 'bg-black' : 'bg-white border-2 border-slate-300'}`;
             cell.appendChild(stone);
+
+            // 마지막 착수 표시
+            boardEl.querySelectorAll('.last-dot').forEach(el => el.remove());
+            const dot = document.createElement('div');
+            dot.className = 'last-dot';
+            cell.appendChild(dot);
         }
 
         function updateTurnUI() {
@@ -578,32 +721,34 @@
                 topStatusMsg.textContent = '내 차례입니다!';
                 topStatusMsg.className = 'text-sm text-amber-400 font-bold mt-1';
             } else {
-                topStatusMsg.textContent = '상대방의 차례를 기다리는 중...';
+                topStatusMsg.textContent = gameMode === 'ai' ? '🤖 AI가 생각 중...' : '상대방의 차례를 기다리는 중...';
                 topStatusMsg.className = 'text-sm text-slate-400 mt-1';
             }
         }
 
-        async function checkWinCondition(r, c, color) {
+        function isFiveInRow(r, c, color) {
             const directions = [
-                { dr: 0, dc: 1 },  
-                { dr: 1, dc: 0 },  
-                { dr: 1, dc: 1 },  
-                { dr: 1, dc: -1 }  
+                { dr: 0, dc: 1 },
+                { dr: 1, dc: 0 },
+                { dr: 1, dc: 1 },
+                { dr: 1, dc: -1 }
             ];
-
             for (let { dr, dc } of directions) {
                 let count = 1;
                 count += countConsecutive(r, c, dr, dc, color);
                 count += countConsecutive(r, c, -dr, -dc, color);
+                if (count >= 5) return true;
+            }
+            return false;
+        }
 
-                if (count >= 5) {
-                    clearInterval(timerInterval);
-                    await supabaseClient
-                        .from('rooms')
-                        .update({ winner: color })
-                        .eq('id', currentRoomId);
-                    return;
-                }
+        async function checkWinCondition(r, c, color) {
+            if (isFiveInRow(r, c, color)) {
+                clearInterval(timerInterval);
+                await supabaseClient
+                    .from('rooms')
+                    .update({ winner: color })
+                    .eq('id', currentRoomId);
             }
         }
 
@@ -613,15 +758,28 @@
             const resultTitle = document.getElementById('result-title');
             const resultDesc = document.getElementById('result-desc');
             const trophyDiff = document.getElementById('trophy-diff');
+            const rematchBtn = document.getElementById('rematch-btn');
 
             overlay.classList.remove('hidden');
 
             const isMeWinner = (winnerColor === myColor);
+            const isAi = (gameMode === 'ai');
+            const isDraw = (winnerColor === 'draw');
+
+            if (isAi) {
+                rematchBtn.textContent = '🔄 한 판 더 (색 교대)';
+                rematchBtn.disabled = false;
+                document.getElementById('rematch-status-msg').textContent = '';
+            }
 
             if (applyTrophy) {
-                if (isMeWinner) {
-                    myTrophy += 30;
-                    trophyDiff.textContent = '+30 트로피';
+                if (isDraw) {
+                    trophyDiff.textContent = '변동 없음';
+                    trophyDiff.className = 'text-2xl font-bold text-slate-300';
+                } else if (isMeWinner) {
+                    const gain = isAi ? AI_WIN_TROPHY : 30;
+                    myTrophy += gain;
+                    trophyDiff.textContent = `+${gain} 트로피`;
                     trophyDiff.className = 'text-2xl font-bold text-amber-400';
 
                     confetti({
@@ -629,18 +787,26 @@
                         spread: 80,
                         origin: { y: 0.6 }
                     });
+                } else if (isAi) {
+                    // AI에게 져도 트로피는 깎이지 않는다
+                    trophyDiff.textContent = '변동 없음';
+                    trophyDiff.className = 'text-2xl font-bold text-slate-300';
                 } else {
                     myTrophy = Math.max(0, myTrophy - 20);
                     trophyDiff.textContent = '-20 트로피';
                     trophyDiff.className = 'text-2xl font-bold text-red-400';
                 }
-                localStorage.setItem('omok_trophy', myTrophy);
+                saveTrophy(); // localStorage + Supabase players 테이블
             }
 
-            if (isMeWinner) {
+            if (isDraw) {
+                resultTitle.textContent = '무승부';
+                resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-slate-300';
+                resultDesc.textContent = '판이 가득 찼습니다.';
+            } else if (isMeWinner) {
                 resultTitle.textContent = '🏆 승리!';
                 resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-amber-400 animate-bounce';
-                resultDesc.textContent = '상대를 제압하고 승리하였습니다!';
+                resultDesc.textContent = isAi ? 'AI를 제압하고 승리하였습니다!' : '상대를 제압하고 승리하였습니다!';
             } else {
                 resultTitle.textContent = '패배...';
                 resultTitle.className = 'text-6xl font-black mb-2 tracking-wider text-slate-500';
@@ -666,6 +832,169 @@
         document.getElementById('leave-btn').addEventListener('click', () => {
             location.reload();
         });
+
+        // =====================================================
+        //                      AI 대전 모드
+        // =====================================================
+
+        document.getElementById('ai-start-btn').addEventListener('click', async () => {
+            const nick = document.getElementById('nickname-input').value.trim();
+            if (!nick) {
+                showToast('본인의 닉네임을 입력해주세요!');
+                return;
+            }
+            myNickname = nick;
+            aiLevel = document.getElementById('ai-level-select').value;
+            await syncTrophy(myNickname);
+            startAiGame('black');
+        });
+
+        function startAiGame(playerColor) {
+            gameMode = 'ai';
+            currentRoomId = null;
+            myColor = playerColor;
+            aiColor = (playerColor === 'black') ? 'white' : 'black';
+            opponentNickname = `AI (${AI_LEVEL_LABEL[aiLevel]})`;
+            roomStatus = 'playing';
+            currentTurn = 'black';
+            aiGameOver = false;
+            aiThinking = false;
+            boardState = Array(15).fill(null).map(() => Array(15).fill(null));
+
+            lobbyScreen.classList.add('hidden');
+            gameScreen.classList.remove('hidden');
+            roomInfoDisplay.textContent = `AI 대전 · ${AI_LEVEL_LABEL[aiLevel]} · 승리 시 +${AI_WIN_TROPHY}🏆`;
+
+            document.getElementById('result-overlay').classList.add('hidden');
+            document.getElementById('rematch-status-msg').textContent = '';
+
+            updatePlayerCards();
+            initBoardUI();
+            updateTurnUI();
+
+            if (aiColor === 'black') aiMove();
+        }
+
+        // 돌을 놓고 승패/무승부를 판정한다. 게임이 끝났으면 true 반환
+        function placeAiModeStone(r, c, color) {
+            boardState[r][c] = color;
+            renderStone(r, c, color);
+            currentTurn = (color === 'black') ? 'white' : 'black';
+
+            if (isFiveInRow(r, c, color)) {
+                aiGameOver = true;
+                updateTurnUI();
+                setTimeout(() => handleGameOver(color, true), 400);
+                return true;
+            }
+
+            if (boardState.every(row => row.every(cell => cell !== null))) {
+                aiGameOver = true;
+                updateTurnUI();
+                setTimeout(() => handleGameOver('draw', true), 400);
+                return true;
+            }
+
+            updateTurnUI();
+            return false;
+        }
+
+        function aiMove() {
+            aiThinking = true;
+            setTimeout(() => {
+                if (aiGameOver) { aiThinking = false; return; }
+                const [r, c] = pickAiMove();
+                placeAiModeStone(r, c, aiColor);
+                aiThinking = false;
+            }, 500);
+        }
+
+        function inBoard(r, c) {
+            return r >= 0 && r < 15 && c >= 0 && c < 15;
+        }
+
+        function hasNeighborStone(r, c, dist) {
+            for (let dr = -dist; dr <= dist; dr++) {
+                for (let dc = -dist; dc <= dist; dc++) {
+                    const nr = r + dr, nc = c + dc;
+                    if (inBoard(nr, nc) && boardState[nr][nc] !== null) return true;
+                }
+            }
+            return false;
+        }
+
+        // 한 방향 라인 점수: 연속 개수 + 양끝이 열려 있는지
+        function lineScore(r, c, dr, dc, color) {
+            let count = 1;
+            let open = 0;
+
+            let nr = r + dr, nc = c + dc;
+            while (inBoard(nr, nc) && boardState[nr][nc] === color) { count++; nr += dr; nc += dc; }
+            if (inBoard(nr, nc) && boardState[nr][nc] === null) open++;
+
+            nr = r - dr; nc = c - dc;
+            while (inBoard(nr, nc) && boardState[nr][nc] === color) { count++; nr -= dr; nc -= dc; }
+            if (inBoard(nr, nc) && boardState[nr][nc] === null) open++;
+
+            if (count >= 5) return 100000;
+            if (count === 4) return open === 2 ? 10000 : (open === 1 ? 1500 : 0);
+            if (count === 3) return open === 2 ? 1200 : (open === 1 ? 150 : 0);
+            if (count === 2) return open === 2 ? 120 : (open === 1 ? 15 : 0);
+            return open === 2 ? 3 : (open === 1 ? 1 : 0);
+        }
+
+        // 이 칸에 color 돌을 놓았을 때의 총점 (4방향 합 → 쌍삼/사삼 같은 복합 공격도 자연스럽게 높게 평가)
+        function evalCell(r, c, color) {
+            const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+            let total = 0;
+            for (const [dr, dc] of dirs) total += lineScore(r, c, dr, dc, color);
+            return total;
+        }
+
+        function pickAiMove() {
+            let hasStone = false;
+            for (let r = 0; r < 15 && !hasStone; r++) {
+                for (let c = 0; c < 15; c++) {
+                    if (boardState[r][c] !== null) { hasStone = true; break; }
+                }
+            }
+            if (!hasStone) return [7, 7];
+
+            const scored = [];
+            for (let r = 0; r < 15; r++) {
+                for (let c = 0; c < 15; c++) {
+                    if (boardState[r][c] !== null) continue;
+                    if (!hasNeighborStone(r, c, 2)) continue;
+
+                    const attack = evalCell(r, c, aiColor);
+                    const defense = evalCell(r, c, myColor);
+                    const center = (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.1;
+                    // 내가 이기는 수(공격 5목)가 상대 5목 차단보다 우선
+                    scored.push({ r, c, s: attack * 1.1 + defense + center });
+                }
+            }
+
+            scored.sort((a, b) => b.s - a.s);
+            if (scored.length === 0) {
+                // 이웃이 없을 때(드문 경우): 아무 빈 칸
+                for (let r = 0; r < 15; r++)
+                    for (let c = 0; c < 15; c++)
+                        if (boardState[r][c] === null) return [r, c];
+            }
+
+            let pick = scored[0];
+            // 필승/필수 방어 수(만점대)는 난이도와 상관없이 항상 둔다
+            const mustPlay = scored[0].s >= 10000;
+
+            if (!mustPlay) {
+                if (aiLevel === 'easy' && Math.random() < 0.4) {
+                    pick = scored[Math.floor(Math.random() * Math.min(6, scored.length))];
+                } else if (aiLevel === 'normal' && scored.length > 1 && Math.random() < 0.2) {
+                    pick = scored[1];
+                }
+            }
+            return [pick.r, pick.c];
+        }
     </script>
 </body>
 </html>
