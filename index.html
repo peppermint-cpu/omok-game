@@ -82,6 +82,12 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 .st.block::before{content:'🧱'}
 .dot{position:absolute;z-index:3;width:24%;height:24%;border-radius:50%;background:var(--red);pointer-events:none}
 @keyframes drop{from{transform:scale(1.5);opacity:0}}
+.pc{position:relative}
+.bub{position:absolute;right:12px;top:-24px;font-size:34px;z-index:5;animation:bub 2.4s ease-out forwards;pointer-events:none;filter:drop-shadow(0 4px 6px #0008)}
+@keyframes bub{0%{transform:scale(.2) translateY(10px);opacity:0}12%{transform:scale(1.3);opacity:1}22%{transform:scale(1)}85%{opacity:1}100%{transform:translateY(-14px);opacity:0}}
+#emo-panel{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:8px}
+#emo-panel button{font-size:24px;background:var(--s2);border-radius:10px;padding:6px 0}
+#emo-panel button:active{transform:scale(.88)}
 .st.hole{width:104%;height:104%;border-radius:0;background:radial-gradient(circle,#000 35%,#2a170a 100%);box-shadow:inset 0 0 14px #000}
 #fx{position:absolute;inset:0;pointer-events:none;z-index:30;overflow:hidden;border-radius:11px}
 .fx{position:absolute;transform:translate(-50%,-50%)}
@@ -208,12 +214,13 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
   <div id="items" class="items hidden"></div>
   <div id="hint" class="hidden"></div>
   <button id="endturn" class="btn ghost hidden" onclick="endTurn()">⏭️ 턴 넘기기</button>
+  <div id="emo-panel" class="hidden"></div>
   <div id="my-card" class="pc">
     <div id="my-si" class="si black"></div>
     <div class="grow"><div><span id="my-nm" class="nm" style="color:var(--gold)"></span><span id="my-tier" class="chip"></span></div><div id="my-tro" class="tiny"></div></div>
     <div id="my-tm" class="tm">--</div>
   </div>
-  <div class="row"><span id="room-info" class="tiny grow"></span><button id="leave" style="background:none;color:var(--red);font-size:13px">나가기</button></div>
+  <div class="row"><span id="room-info" class="tiny grow"></span><button id="emo-btn" style="background:none;color:var(--gold);font-size:13px">😊 이모티콘</button><button id="leave" style="background:none;color:var(--red);font-size:13px">나가기</button></div>
 </section>
 </div>
 
@@ -242,7 +249,7 @@ const ITEMS = {
   slash:  { i:'⚔️', n:'참격',    t:1, d:'터치한 칸을 지나는 대각선 두 줄의 상대 돌을 모두 베어요' },
   mine:   { i:'🧨', n:'지뢰',    t:1, d:'빈 칸에 몰래 묻어요. 상대가 밟으면 돌이 사라지고 턴을 잃어요' },
   double: { i:'⚡', n:'연속',    d:'이번 턴에 돌을 두 번 놓아요 (바로 다음 턴에는 다시 못 써요)' },
-  shield: { i:'🛡️', n:'방어막',  d:'상대의 다음 공격 아이템 1번을 막아요' },
+  shield: { i:'🛡️', n:'방어막',  d:'상대의 다음 공격 아이템 1번을 막아요 (상대에게는 보이지 않아요)' },
   freeze: { i:'🧊', n:'동결',    d:'상대는 다음 턴에 아이템을 쓸 수 없어요' },
   rewind: { i:'⏪', n:'되감기',  d:'상대의 마지막 수를 취소해요' },
   sweep:  { i:'🧹', n:'청소',    d:'판 위의 봉쇄를 모두 치워요' },
@@ -551,6 +558,9 @@ async function loadRoom() {
 }
 
 function subscribe() {
+  if (emoSub) sb.removeChannel(emoSub);
+  emoSub = sb.channel(`emo-${roomId}`, { config:{ broadcast:{ self:false } } })
+    .on('broadcast', { event:'emo' }, p => { const e = p.payload && p.payload.e; if (EMOS.includes(e)) showEmo('opp', e); }).subscribe();
   if (movesSub) sb.removeChannel(movesSub);
   if (roomSub) sb.removeChannel(roomSub);
 
@@ -607,6 +617,25 @@ async function requestRematch() {
     pending = null; acting = false; placing = false;
     $('rm-btn').textContent = '🔄 재대결 요청'; $('rm-btn').disabled = false; $('rm-msg').textContent = '';
   }
+}
+
+// ===== 이모티콘 =====
+const EMOS = ['😀','😂','😎','🥹','😭','😡','🤔','😱','👍','👏','🙏','🔥','😴','🤝','💪','🎉','😏','🫡'];
+let emoSub = null, emoCool = 0;
+EMOS.forEach(e => { const b = h('button', '', e); b.onclick = () => sendEmo(e); $('emo-panel').appendChild(b); });
+$('emo-btn').onclick = () => $('emo-panel').classList.toggle('hidden');
+function showEmo(side, e) {
+  const card = $(side === 'me' ? 'my-card' : 'opp-card');
+  card.querySelectorAll('.bub').forEach(x => x.remove());
+  const b = h('div', 'bub', e); card.appendChild(b); setTimeout(() => b.remove(), 2500);
+}
+function sendEmo(e) {
+  if (Date.now() < emoCool) return toast('이모티콘은 잠깐 뒤에 다시 보낼 수 있어요', 1200);
+  if (gameMode === 'online' && !oppName) return toast('상대가 입장하면 보낼 수 있어요!');
+  emoCool = Date.now() + 1500; showEmo('me', e);
+  $('emo-panel').classList.add('hidden');
+  if (gameMode === 'ai') { if (Math.random() < .6) setTimeout(() => showEmo('opp', EMOS[Math.floor(Math.random() * EMOS.length)]), 700 + Math.random() * 900); return; }
+  if (emoSub) emoSub.send({ type:'broadcast', event:'emo', payload:{ e } });
 }
 
 // ===== 타이머 / 상태 =====
@@ -773,7 +802,7 @@ async function commitItem(item, extra) {
       toast(error ? '아이템 사용 실패: ' + error.message : '지금은 내 차례가 아니에요.');
       return false;
     }
-  } else toast(s.msg);
+  } else if (s.msg) toast(s.msg);
   setPending(null); updateCards();
   return true;
 }
@@ -852,7 +881,6 @@ async function runInstant(t) {
   if (!rs || !rs.inv[me].includes(t)) return;
   if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
-  if (t === 'smash' && !(rs.sd && rs.sd[opp])) return toast('상대에게 방어막이 없어요!');
   if (t === 'thief' && !rs.inv[opp].length) return toast('훔칠 아이템이 없어요!');
   if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
   if (t === 'quake' || t === 'swap') {
@@ -933,8 +961,8 @@ async function runInstant(t) {
   await commitItem(t, s => {
     s.fx = { k, t };
     if (t === 'double') { s.dbl[me] = 1; s.du[me] = 1; s.u = 0; }
-    if (t === 'shield') s.sd[me] = 1;
-    if (t === 'smash') s.sd[opp] = 0;
+    if (t === 'shield') { s.sd[me] = 1; s.msg = ''; s.fx = null; toast('🛡️ 방어막 활성! (상대에게는 보이지 않아요)'); }
+    if (t === 'smash') { s.msg = s.sd[opp] ? '🔨 방어막이 깨졌다!' : '🔨 깨뜨릴 방어막이 없었다...'; s.sd[opp] = 0; }
     if (t === 'jackpot') while (s.inv[me].length < 3) s.inv[me].push(rnd('jackpot'));
     if (t === 'freeze') s.fz[opp] = 1;
     if (t === 'dice') for (let i = 0; i < 2; i++) if (s.inv[me].length < 3) s.inv[me].push(rnd('dice'));
@@ -1275,7 +1303,7 @@ async function aiUseItem(used) {
 
   if (!danger && use !== 'double' && inv.length < 3 && Math.random() < .6) return false;
   inv.splice(inv.indexOf(use), 1);
-  toast(`🤖 AI: ${ITEMS[use].i} ${ITEMS[use].n} 사용!`);
+  if (use !== 'shield') toast(`🤖 AI: ${ITEMS[use].i} ${ITEMS[use].n} 사용!`);
   if (BLOCKABLE.includes(use) && rs.sd[me]) {
     rs.sd[me] = 0; playFx('shield'); toast('🛡️ 방어막이 AI의 공격을 막았다!'); await sleep(600); updateCards(); renderItems(); return 'used';
   }
@@ -1327,7 +1355,7 @@ async function aiUseItem(used) {
     playFx('rewind', lp[0], lp[1], ai); await sleep(480); boardState[lp[0]][lp[1]] = null; lastPos[me] = null; redrawLocal();
   } else if (use === 'block') {
     boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
-  } else if (use === 'shield') { rs.sd[ai] = 1; playFx('shield'); await sleep(400); }
+  } else if (use === 'shield') { rs.sd[ai] = 1; await sleep(300); }
   else if (use === 'freeze') { rs.fz[me] = 1; playFx('freeze'); await sleep(400); }
   else if (use === 'double') { rs.du[ai] = 1; playFx('double'); await sleep(350); }
   else if (use === 'mine') { const [mr, mc] = bestCell(me); rs.mines[ai].push([mr, mc]); }
