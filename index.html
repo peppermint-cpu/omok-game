@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <!--
-  [Supabase 추가 설정] 기존 SQL(profiles, rooms 컬럼, 정책)은 그대로 두고, 아이템전용으로 아래만 추가 실행하세요.
+  [Supabase 설정] 기존 SQL(profiles, rooms 컬럼, 정책)은 그대로 두고, 아이템전용으로 아래만 추가 실행하세요.
+  (이미 실행했다면 이번 업데이트에는 추가 SQL이 필요 없습니다.)
 
   alter table public.rooms
     add column if not exists item_mode boolean not null default false,
@@ -108,6 +109,8 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 @keyframes met{from{transform:translate(calc(-50% - 130px),calc(-50% - 230px)) scale(.5)}to{transform:translate(-50%,-50%) scale(1.2)}}
 .orc{width:34px;height:34px;border:3px solid #b28dff;border-radius:50%;box-shadow:0 0 14px #b28dff,inset 0 0 8px #b28dff;animation:orc .8s infinite alternate}
 @keyframes orc{to{transform:translate(-50%,-50%) scale(1.35);opacity:.5}}
+.em.sm{font-size:28px}
+.mk{position:absolute;inset:0;display:grid;place-items:center;font-size:12px;z-index:1;pointer-events:none;opacity:.85}
 @keyframes pl{50%{transform:scale(.78)}}
 .tg-black .st.black,.tg-white .st.white{animation:pl .7s infinite;box-shadow:0 0 0 2px var(--red)}
 .items{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -180,7 +183,7 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
       <label class="tg"><input type="checkbox" id="o-item">⚡ 아이템전</label>
     </div>
     <input type="password" id="r-pw" class="hidden" placeholder="비밀번호 (4자 이상)" maxlength="20">
-    <div class="mu" id="item-desc" style="display:none">💣 🧱 ⚡ 🔄 ☄️ 🛡️ ⏪ 🔮 🎲 🦝 — 10가지 아이템! 돌 3개마다 획득</div>
+    <div class="mu" id="item-desc" style="display:none">💣 🧱 ⚡ ☄️ 🛡️ 🌪️ ⚔️ 🍀 🔍 ♻️ 🦝 … 21가지 아이템! 돌 3개마다 획득</div>
     <button id="create" class="btn gold">방 만들기 (흑돌)</button>
   </div>
 
@@ -232,19 +235,32 @@ const ITEMS = {
   block:  { i:'🧱', n:'봉쇄',    t:1, d:'빈 칸 1곳을 영구히 막아요' },
   convert:{ i:'🔄', n:'개종',    t:1, d:'상대 돌 1개를 내 돌로 바꿔요' },
   meteor: { i:'☄️', n:'운석',    t:1, d:'터치한 곳 3×3 안의 상대 돌을 모두 파괴해요' },
-  double: { i:'⚡', n:'연속',    d:'이번 턴에 돌을 두 번 놓아요' },
+  fire:   { i:'🔥', n:'화염',    t:1, d:'터치한 가로줄의 상대 돌을 모두 태워요' },
+  wave:   { i:'🌊', n:'파도',    t:1, d:'터치한 세로줄의 상대 돌을 모두 쓸어내요' },
+  slash:  { i:'⚔️', n:'참격',    t:1, d:'터치한 칸을 지나는 대각선 두 줄의 상대 돌을 모두 베어요' },
+  mine:   { i:'🧨', n:'지뢰',    t:1, d:'빈 칸에 몰래 묻어요. 상대가 밟으면 돌이 사라지고 턴을 잃어요' },
+  double: { i:'⚡', n:'연속',    d:'이번 턴에 돌을 두 번 놓아요 (바로 다음 턴에는 다시 못 써요)' },
   shield: { i:'🛡️', n:'방어막',  d:'상대의 다음 공격 아이템 1번을 막아요' },
+  freeze: { i:'🧊', n:'동결',    d:'상대는 다음 턴에 아이템을 쓸 수 없어요' },
   rewind: { i:'⏪', n:'되감기',  d:'상대의 마지막 수를 취소해요' },
+  sweep:  { i:'🧹', n:'청소',    d:'판 위의 봉쇄를 모두 치워요' },
+  storm:  { i:'🌪️', n:'태풍',    d:'상대 돌 무작위 3개를 날려버려요' },
+  detect: { i:'🔍', n:'지뢰탐지', d:'상대가 묻어둔 지뢰를 모두 찾아 없애요' },
   oracle: { i:'🔮', n:'예언',    d:'나에게 가장 좋은 한 수를 알려줘요 (나만 보여요)' },
+  peek:   { i:'🔭', n:'정찰',    d:'상대가 가진 아이템을 확인해요 (나만 보여요)' },
   dice:   { i:'🎲', n:'랜덤박스', d:'랜덤 아이템을 최대 2개 받아요' },
+  luck:   { i:'🍀', n:'행운',    d:'돌을 한 번만 더 두면 바로 아이템을 받아요' },
+  reroll: { i:'♻️', n:'재구성',  d:'내 다른 아이템을 모두 새 랜덤 아이템으로 바꿔요' },
   thief:  { i:'🦝', n:'도둑',    d:'상대 아이템 1개를 훔쳐요' }
 };
-const BLOCKABLE = ['bomb', 'convert', 'meteor', 'rewind', 'thief'];
+const BLOCKABLE = ['bomb', 'convert', 'meteor', 'fire', 'wave', 'slash', 'storm', 'rewind', 'thief', 'freeze'];
 const rnd = ex => { const k = Object.keys(ITEMS).filter(x => x !== ex); return k[Math.floor(Math.random() * k.length)]; };
-const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, sd:{ black:0, white:0 }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
-let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0;
+const norm = s => { ['sd','fz','ld','du'].forEach(k => s[k] = s[k] || { black:0, white:0 }); s.mines = s.mines || { black:[], white:[] }; };
+const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, sd:{ black:0, white:0 }, fz:{ black:0, white:0 }, ld:{ black:0, white:0 }, du:{ black:0, white:0 }, mines:{ black:[], white:[] }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
+// acting: 아이템 사용/착수가 끝나기 전에는 다른 클릭을 모두 무시하는 잠금
+let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0, acting = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-let lastPos = { black:null, white:null };   // rs: 아이템 상태, pending: 선택한 아이템
+let lastPos = { black:null, white:null }, placing = false;   // rs: 아이템 상태, pending: 선택한 아이템
 const oppOf = c => c === 'black' ? 'white' : 'black';
 
 const TIERS = [[1000,'👑 오목의 신'],[800,'🔮 마스터'],[650,'🟢 에메랄드'],[500,'💎 다이아몬드'],[350,'⚡ 플래티넘'],[250,'🥇 골드'],[150,'🥈 실버'],[0,'🥉 브론즈']];
@@ -401,6 +417,7 @@ async function syncBoard() {
   const { data } = await sb.from('moves').select('*').eq('room_id', roomId).order('created_at', { ascending:true });
   boardState = empty(); initBoard();
   (data || []).forEach(m => { boardState[m.row][m.col] = m.color; renderStone(m.row, m.col, m.color, true); });
+  drawMines();
 }
 
 // ===== 방 만들기 / 입장 =====
@@ -465,7 +482,7 @@ function startSession(code, status) {
   stopPolling();
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('room-info').textContent = `${roomTitle} · 코드 ${code}`;
-  roomStatus = status; wantRematch = false; prevWinner = null; rs = null; pending = null;
+  roomStatus = status; wantRematch = false; prevWinner = null; rs = null; pending = null; acting = false; placing = false;
   $('result').classList.add('hidden');
   const rb = $('rm-btn'); rb.textContent = '🔄 재대결 요청'; rb.disabled = false; $('rm-msg').textContent = '';
   updateCards(); initBoard(); loadRoom(); subscribe();
@@ -521,8 +538,8 @@ function subscribe() {
         const o = rs; rs = u.state;
         if (o && o.v !== rs.v && rs.msg) toast(rs.msg);
         const fx = o && rs.fx && (!o.fx || o.fx.k !== rs.fx.k) ? rs.fx : null;
-        if (fx) playFx(fx.t, fx.r, fx.c, oppOf(myColor));
-        if (o && o.b !== rs.b) setTimeout(syncBoard, !fx ? 0 : fx.t === 'meteor' ? 950 : 520);
+        if (fx) playFx(fx.t, fx.r, fx.c, oppOf(myColor), fx.l);
+        if (o && o.b !== rs.b) setTimeout(syncBoard, !fx ? 0 : fxWait(fx.t) + 50);
       }
       if (!u.winner) {
         if (prevWinner) { prevWinner = null; $('result').classList.add('hidden'); wantRematch = false; syncBoard(); }
@@ -583,6 +600,7 @@ function updateTurnUI() {
 
 // ===== 아이템 UI =====
 function renderItems() {
+  drawMines();
   const bar = $('items'), hint = $('hint');
   if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
@@ -600,7 +618,7 @@ function renderItems() {
     : sh + '돌 3개마다 아이템 획득 · 눌러서 설명 보기';
 }
 
-function playFx(t, r, c, by) {
+function playFx(t, r, c, by, list) {
   by = by || myColor;
   const layer = $('fx'), wrap = layer.parentNode, lr = layer.getBoundingClientRect(), B = $('board');
   const cellAt = (a, b) => B.querySelector(`[data-row='${a}'][data-col='${b}']`);
@@ -612,6 +630,7 @@ function playFx(t, r, c, by) {
   let x = cx, y = cy;
   if (r != null) { const cl = cellAt(r, c); if (cl) { const cr = cl.getBoundingClientRect(); x = cr.left - lr.left + cr.width / 2; y = cr.top - lr.top + cr.height / 2; } }
   if (t === 'bomb') { mark(r, c, 'boom'); add('ring', x, y); add('em', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c'], 14); shake(); }
+  else if (t === 'mine') { add('ring', x, y); add('em', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166'], 14); shake(); }
   else if (t === 'rewind') { mark(r, c, 'boom'); add('ring', x, y); add('em', x, y, '⏪'); burst(x, y, ['#7fb2ff', '#ffffff'], 12); }
   else if (t === 'convert') { mark(r, c, 'flip'); add('em', x, y, '🔄'); burst(x, y, ['#b28dff', '#ffffff'], 12); }
   else if (t === 'meteor') {
@@ -621,11 +640,35 @@ function playFx(t, r, c, by) {
       add('ring', x, y); add('em big', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c', '#ffffff'], 24); shake();
     }, 450);
   }
+  else if (t === 'fire' || t === 'wave' || t === 'slash') {
+    const ico = { fire:'🔥', wave:'🌊', slash:'⚔️' }[t], seq = [];
+    if (t === 'slash') for (let i = -14; i <= 14; i++) { seq.push([r + i, c + i, (i + 14) * 30]); if (i) seq.push([r + i, c - i, (i + 14) * 30]); }
+    else for (let i = 0; i < 15; i++) seq.push([t === 'fire' ? r : i, t === 'fire' ? i : c, i * 35]);
+    seq.forEach(([a, b, d]) => setTimeout(() => {
+      const cl = cellAt(a, b); if (!cl) return;
+      const cr = cl.getBoundingClientRect();
+      add('em sm', cr.left - lr.left + cr.width / 2, cr.top - lr.top + cr.height / 2, ico);
+      const st = cl.querySelector('.st.' + oppOf(by)); if (st) st.classList.add('boom');
+    }, d));
+  }
+  else if (t === 'storm') {
+    (list || []).forEach(([a, b], i) => setTimeout(() => {
+      const cl = cellAt(a, b); if (!cl) return;
+      const cr = cl.getBoundingClientRect(), px = cr.left - lr.left + cr.width / 2, py = cr.top - lr.top + cr.height / 2, st = cl.querySelector('.st');
+      if (st) st.classList.add('boom');
+      add('em sm', px, py, '🌪️'); burst(px, py, ['#9ad0ff', '#ffffff'], 8);
+    }, i * 200));
+    setTimeout(shake, 250);
+  }
   else if (t === 'block') setTimeout(() => { add('ring dust', x, y); burst(x, y, ['#a88b5c', '#7a6a58'], 8); shake(); }, 300);
+  else if (t === 'sweep') { add('em big', cx, cy, '🧹'); burst(cx, cy, ['#c9b48a', '#7a6a58'], 14); }
   else if (t === 'double') { add('flash', 0, 0); add('em', cx, cy, '⚡'); burst(cx, cy, ['#ffd166', '#ffffff'], 16); }
-  else if (t === 'shield') { add('flash blue', 0, 0); add('em', cx, cy, '🛡️'); burst(cx, cy, ['#7fb2ff', '#ffffff'], 14); }
+  else if (t === 'shield' || t === 'freeze') { add('flash blue', 0, 0); add('em', cx, cy, t === 'shield' ? '🛡️' : '🧊'); burst(cx, cy, ['#7fb2ff', '#ffffff'], 14); }
   else if (t === 'dice') { add('em', cx, cy, '🎲'); burst(cx, cy, ['#ffd166', '#19c39a', '#ff5d73'], 14); }
   else if (t === 'thief') { add('em', cx, cy, '🦝'); burst(cx, cy, ['#aaaaaa', '#555555'], 10); }
+  else if (t === 'luck') { add('em', cx, cy, '🍀'); burst(cx, cy, ['#3ddbb0', '#ffd166', '#ffffff'], 14); }
+  else if (t === 'reroll') { add('em', cx, cy, '♻️'); burst(cx, cy, ['#19c39a', '#ffffff'], 12); }
+  else if (t === 'detect') { add('em big', cx, cy, '🔍'); burst(cx, cy, ['#ffd166', '#ffffff'], 12); }
   else if (t === 'oracle') add('orc', x, y, '', 4000);
 }
 
@@ -635,26 +678,34 @@ function setPending(t) {
   renderItems();
 }
 
+// 아이템을 소모하고 상태를 서버에 반영. 성공하면 true
+// (서버 쪽에서도 "아직 내 차례일 때만" 반영되도록 turn 조건을 건다)
 async function commitItem(item, extra) {
   const s = structuredClone(rs);
-  s.sd = s.sd || { black:0, white:0 }; s.fx = null;
-  s.inv[myColor].splice(s.inv[myColor].indexOf(item), 1);
+  norm(s); s.fx = null;
+  const ix = s.inv[myColor].indexOf(item); if (ix < 0) return false;
+  s.inv[myColor].splice(ix, 1);
   s.u = 1; s.v++; s.msg = `${myNickname}: ${ITEMS[item].i} ${ITEMS[item].n} 사용!`;
   if (extra) extra(s);
   const old = rs; rs = s;
   if (gameMode === 'online') {
-    const { error } = await sb.from('rooms').update({ state:s }).eq('id', roomId);
-    if (error) { rs = old; return toast('아이템 사용 실패: ' + error.message); }
+    const { data, error } = await sb.from('rooms').update({ state:s }).eq('id', roomId).eq('turn', myColor).select('id');
+    if (error || !data || !data.length) {
+      rs = old; renderItems(); updateCards();
+      toast(error ? '아이템 사용 실패: ' + error.message : '지금은 내 차례가 아니에요.');
+      return false;
+    }
   } else toast(s.msg);
   setPending(null); updateCards();
+  return true;
 }
 
 // 방어막이 공격을 막으면 true
-function blocked(t) {
+async function blocked(t) {
   const opp = oppOf(myColor);
   if (!BLOCKABLE.includes(t) || !(rs.sd && rs.sd[opp])) return false;
   playFx('shield'); setPending(null);
-  commitItem(t, s => { s.sd[opp] = 0; s.msg = `🛡️ 방어막이 ${ITEMS[t].n}을(를) 막았다!`; s.fx = { k:Date.now(), t:'shield' }; });
+  await commitItem(t, s => { s.sd[opp] = 0; s.msg = `🛡️ 방어막이 ${ITEMS[t].n}을(를) 막았다!`; s.fx = { k:Date.now(), t:'shield' }; });
   return true;
 }
 
@@ -667,18 +718,48 @@ function bestCell(col) {
   return b;
 }
 
+function stonesOf(col) {
+  const o = [];
+  boardState.forEach((row, a) => row.forEach((v, b) => { if (v === col) o.push([a, b]); }));
+  return o;
+}
+function pickStones(col, n) {
+  const l = stonesOf(col), o = [];
+  while (l.length && o.length < n) o.push(l.splice(Math.floor(Math.random() * l.length), 1)[0]);
+  return o;
+}
+
+// 착수/아이템 처리 중이거나 연출 중이면 모든 입력을 막는다
+const uiLocked = () => acting || placing || fxBusy || (gameMode === 'ai' && (aiThinking || aiOver));
+// 연속(⚡)은 바로 다음 턴에 다시 쓸 수 없다
+const doubleLocked = () => !!(rs && ((rs.ld && rs.ld[myColor]) || rs.dbl[myColor] || (rs.du && rs.du[myColor])));
+
 async function pickItem(t) {
-  if (roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
+  if (uiLocked()) return;
+  if (!rs || roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
+  if (!rs.inv[myColor].includes(t)) return;
+  if (rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
   if (rs.u) return toast('이번 턴에는 이미 아이템을 썼어요.');
+  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
   if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
   useInstant(t);                                    // 즉시형: 한 번 더 누르면 사용
 }
 
 async function useInstant(t) {
+  if (acting) return;
+  acting = true;
+  try { await runInstant(t); } finally { acting = false; }
+}
+
+async function runInstant(t) {
   const me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
+  if (!rs || rs.u || !rs.inv[me].includes(t)) return;
+  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (t === 'thief' && !rs.inv[opp].length) return toast('훔칠 아이템이 없어요!');
-  let pos = null;
+  if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
+  let pos = null, storm = null; const bl = [];
+  if (t === 'storm') { storm = pickStones(opp, 3); if (!storm.length) return toast('날려버릴 상대 돌이 없어요!'); }
   if (t === 'rewind') {
     if (ai) pos = lastPos[opp] && boardState[lastPos[opp][0]][lastPos[opp][1]] === opp ? lastPos[opp] : null;
     else {
@@ -687,7 +768,11 @@ async function useInstant(t) {
     }
     if (!pos) return toast('되감을 상대 돌이 없어요!');
   }
-  if (blocked(t)) return;
+  if (t === 'sweep') {
+    boardState.forEach((row, a) => row.forEach((v, b) => { if (v === 'block') bl.push([a, b]); }));
+    if (!bl.length) return toast('치울 봉쇄가 없어요!');
+  }
+  if (await blocked(t)) return;
   setPending(null);
   if (t === 'rewind') {
     fxBusy = true; setTimeout(() => fxBusy = false, 800);
@@ -700,13 +785,48 @@ async function useInstant(t) {
     if (ai) { lastPos[opp] = null; redrawLocal(); } else syncBoard();
     return commitItem(t, s => { s.b++; s.fx = { k, t, r:pos[0], c:pos[1] }; });
   }
+  if (t === 'sweep') {
+    fxBusy = true; setTimeout(() => fxBusy = false, 800);
+    playFx('sweep'); await sleep(500);
+    if (!ai) {
+      const { error } = await sb.from('moves').delete().eq('room_id', roomId).eq('color', 'block');
+      if (error) { syncBoard(); return toast('실패: ' + error.message); }
+    }
+    bl.forEach(([a, b]) => boardState[a][b] = null);
+    if (ai) redrawLocal(); else syncBoard();
+    return commitItem(t, s => { s.b++; s.fx = { k, t }; });
+  }
+  if (t === 'storm') {
+    fxBusy = true; setTimeout(() => fxBusy = false, 1600);
+    playFx('storm', null, null, me, storm); await sleep(fxWait('storm'));
+    if (!ai) {
+      const res = await Promise.all(storm.map(([a, b]) => sb.from('moves').delete().eq('room_id', roomId).eq('row', a).eq('col', b)));
+      const bad = res.find(x => x.error);
+      if (bad) { syncBoard(); return toast('실패: ' + bad.error.message); }
+    }
+    storm.forEach(([a, b]) => boardState[a][b] = null);
+    if (ai) redrawLocal(); else syncBoard();
+    return commitItem(t, s => { s.b++; s.fx = { k, t, l:storm }; });
+  }
   if (t === 'oracle') { const [r, c] = bestCell(me); playFx('oracle', r, c); return commitItem(t); }
+  if (t === 'peek') {
+    const txt = rs.inv[opp].map(x => ITEMS[x].i + ITEMS[x].n).join(', ') || '없음';
+    if (await commitItem(t)) toast('🔭 상대 아이템: ' + txt, 6000);
+    return;
+  }
   playFx(t);
-  commitItem(t, s => {
+  await commitItem(t, s => {
     s.fx = { k, t };
-    if (t === 'double') s.dbl[me] = 1;
+    if (t === 'double') { s.dbl[me] = 1; s.du[me] = 1; }
     if (t === 'shield') s.sd[me] = 1;
+    if (t === 'freeze') s.fz[opp] = 1;
     if (t === 'dice') for (let i = 0; i < 2; i++) if (s.inv[me].length < 3) s.inv[me].push(rnd('dice'));
+    if (t === 'luck') s.n[me] += (2 - s.n[me] % 3 + 3) % 3;
+    if (t === 'reroll') s.inv[me] = s.inv[me].map(() => rnd('reroll'));
+    if (t === 'detect') {
+      const n = s.mines[opp].length; s.mines[opp] = [];
+      s.msg = n ? `🔍 지뢰 ${n}개를 찾아 없앴다!` : '🔍 지뢰를 찾지 못했다...';
+    }
     if (t === 'thief') {
       const oi = s.inv[opp], it = oi.splice(Math.floor(Math.random() * oi.length), 1)[0];
       if (s.inv[me].length < 3) s.inv[me].push(it);
@@ -715,10 +835,51 @@ async function useInstant(t) {
   });
 }
 
+const fxWait = t => ({ meteor:900, fire:1000, wave:1000, slash:1000, storm:1100 })[t] || 480;
+
+// 범위 판정 (해당 칸 (a,b)가 터치한 칸 (r,c) 기준 범위 안인지)
+function inArea(t, a, b, r, c) {
+  if (t === 'meteor') return Math.abs(a - r) <= 1 && Math.abs(b - c) <= 1;
+  if (t === 'fire') return a === r;
+  if (t === 'wave') return b === c;
+  if (t === 'slash') return Math.abs(a - r) === Math.abs(b - c);
+  return a === r && b === c;
+}
+// 범위 안에서 col 색 돌이 있는 칸들
+function areaCells(t, r, c, col) {
+  const out = [];
+  for (let a = 0; a < 15; a++) for (let b = 0; b < 15; b++) if (inArea(t, a, b, r, c) && boardState[a][b] === col) out.push([a, b]);
+  return out;
+}
+
+// 내가 묻은 지뢰 표시 (나만 보임)
+function drawMines() {
+  const B = $('board'); B.querySelectorAll('.mk').forEach(e => e.remove());
+  if (!rs || !rs.mines || !myColor) return;
+  (rs.mines[myColor] || []).forEach(([a, b]) => {
+    if (boardState[a][b] !== null) return;
+    const cl = B.querySelector(`[data-row='${a}'][data-col='${b}']`); if (cl) cl.appendChild(h('div', 'mk', '🧨'));
+  });
+}
+
 async function useCellItem(r, c) {
+  if (acting) return;
+  acting = true;
+  try { await runCellItem(r, c); } finally { acting = false; }
+}
+
+async function runCellItem(r, c) {
   const t = pending, me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
-  if (t === 'block') {
+  if (!t || !rs || !rs.inv[me].includes(t)) return setPending(null);
+  if (rs.u) { setPending(null); return toast('이번 턴에는 이미 아이템을 썼어요.'); }
+  if (t === 'block' || t === 'mine') {
     if (boardState[r][c] !== null) return toast('빈 칸을 선택하세요!');
+    if (t === 'mine') {
+      if (((rs.mines && rs.mines[me]) || []).some(([a, b]) => a === r && b === c)) return toast('이미 지뢰가 있는 칸이에요!');
+      await commitItem('mine', s => { s.mines[me].push([r, c]); s.msg = `${myNickname}: 🧨 지뢰를 묻었다!`; });
+      return drawMines();
+    }
+    fxBusy = true; setTimeout(() => fxBusy = false, 700); setPending(null);
     if (ai) { boardState[r][c] = 'block'; renderStone(r, c, 'block'); }
     else {
       const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:'block' }]);
@@ -727,17 +888,11 @@ async function useCellItem(r, c) {
     playFx('block', r, c);
     return commitItem('block', s => { s.fx = { k, t, r, c }; });
   }
-  let cells = [];
-  if (t === 'meteor') {
-    for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) if (inB(a, b) && boardState[a][b] === opp) cells.push([a, b]);
-    if (!cells.length) return toast('범위 안에 상대 돌이 없어요!');
-  } else {
-    if (boardState[r][c] !== opp) return toast('상대 돌을 선택하세요!');
-    cells = [[r, c]];
-  }
-  if (blocked(t)) return;
-  fxBusy = true; setTimeout(() => fxBusy = false, 1200);
-  setPending(null); playFx(t, r, c); await sleep(t === 'meteor' ? 900 : 480);
+  const cells = areaCells(t, r, c, opp);
+  if (!cells.length) return toast(t === 'bomb' || t === 'convert' ? '상대 돌을 선택하세요!' : '범위 안에 상대 돌이 없어요!');
+  if (await blocked(t)) return;
+  fxBusy = true; setTimeout(() => fxBusy = false, 1500);
+  setPending(null); playFx(t, r, c); await sleep(fxWait(t));
   if (!ai) {
     const res = await Promise.all(cells.map(([a, b]) => {
       const q = sb.from('moves'), f = t === 'convert' ? q.update({ color:me }) : q.delete();
@@ -753,12 +908,12 @@ async function useCellItem(r, c) {
     else checkWin(a, b, me);
   }
   if (ai) redrawLocal(); else syncBoard();
-  commitItem(t, s => { s.b++; s.fx = { k, t, r, c }; });
+  return commitItem(t, s => { s.b++; s.fx = { k, t, r, c }; });
 }
 
 // ===== 착수 / 승리 =====
 async function handleCell(r, c) {
-  if (fxBusy) return;
+  if (fxBusy || acting) return;
   if (gameMode === 'ai') {
     if (aiOver || aiThinking) return;
     if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
@@ -766,12 +921,15 @@ async function handleCell(r, c) {
     if (boardState[r][c] !== null) return;
     const dbl = rs && rs.dbl[myColor];
     if (rs) {
-      rs.u = 0; rs.n[myColor]++;
+      rs.n[myColor]++;
       if (dbl) rs.dbl[myColor] = 0;
+      else { rs.u = 0; rs.ld[myColor] = rs.du[myColor]; rs.du[myColor] = 0; rs.fz[myColor] = 0; }
       if (rs.n[myColor] % 3 === 0 && rs.inv[myColor].length < 3) { rs.inv[myColor].push(rnd()); toast('🎁 아이템 획득!'); }
     }
     const ended = placeAi(r, c, myColor);
-    if (!ended) { if (dbl) { currentTurn = myColor; updateTurnUI(); } else aiMove(); }
+    // 연속 착수 중 지뢰를 밟으면 턴이 넘어가므로 턴 종료 처리를 해 준다
+    if (rs && dbl && ended === 'trap') { rs.u = 0; rs.ld[myColor] = rs.du[myColor]; rs.du[myColor] = 0; rs.fz[myColor] = 0; }
+    if (ended !== true) { if (dbl && ended !== 'trap') { currentTurn = myColor; updateTurnUI(); } else aiMove(); }
     renderItems(); updateCards();
     return;
   }
@@ -781,17 +939,44 @@ async function handleCell(r, c) {
   if (pending && ITEMS[pending].t) return useCellItem(r, c);
   if (boardState[r][c] !== null) return;
 
-  let next = oppOf(myColor), s = null;
-  if (rs) {
-    s = structuredClone(rs); s.u = 0; s.v++; s.msg = ''; s.fx = null; s.n[myColor]++;
-    if (s.dbl[myColor]) { s.dbl[myColor] = 0; next = myColor; }
-    if (s.n[myColor] % 3 === 0 && s.inv[myColor].length < 3) { s.inv[myColor].push(rnd()); s.msg = `🎁 ${myNickname} 아이템 획득!`; }
-  }
-  const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:myColor }]);
-  if (error) return toast('착수 실패: ' + error.message);
-  const upd = { turn:next }; if (s) upd.state = s;
-  if (s) rs = s;
-  await sb.from('rooms').update(upd).eq('id', roomId);
+  if (placing) return;
+  placing = true;
+  try {
+    const opp = oppOf(myColor), prev = rs;
+    let next = opp, s = null, trap = false;
+    if (rs) {
+      s = structuredClone(rs); norm(s); s.v++; s.msg = ''; s.fx = null;
+      const mi = s.mines[opp].findIndex(([a, b]) => a === r && b === c);
+      if (mi >= 0) {
+        trap = true; s.mines[opp].splice(mi, 1); s.dbl[myColor] = 0;
+        s.msg = `🧨 ${myNickname}님이 지뢰를 밟았다!`; s.fx = { k:Date.now(), t:'mine', r, c };
+      } else {
+        s.n[myColor]++;
+        if (s.dbl[myColor]) { s.dbl[myColor] = 0; next = myColor; }
+        if (s.n[myColor] % 3 === 0 && s.inv[myColor].length < 3) { s.inv[myColor].push(rnd()); s.msg = `🎁 ${myNickname} 아이템 획득!`; }
+      }
+      // 턴이 넘어갈 때만 "이번 턴 아이템 사용" 표시를 초기화 (연속 착수 중에는 아이템을 더 못 씀)
+      if (next !== myColor) { s.u = 0; s.ld[myColor] = s.du[myColor]; s.du[myColor] = 0; s.fz[myColor] = 0; }
+    }
+    // 서버에서 "지금 정말 내 차례인지" 확인하면서 턴을 넘긴다 (연타해도 한 번만 성공)
+    let q = sb.from('rooms').update(s ? { turn:next, state:s } : { turn:next }).eq('id', roomId).eq('turn', myColor);
+    if (prev) q = q.eq('state->>v', String(prev.v));
+    const { data, error } = await q.select('id');
+    if (error) return toast('착수 실패: ' + error.message);
+    if (!data || !data.length) {
+      const { data:cur } = await sb.from('rooms').select('turn,state').eq('id', roomId).single();
+      if (cur) { currentTurn = cur.turn; if (cur.state) rs = cur.state; updateTurnUI(); renderItems(); }
+      return;
+    }
+    if (s) rs = s;
+    currentTurn = next; updateTurnUI(); renderItems();
+    if (trap) { playFx('mine', r, c); toast(s.msg); return; }
+    const { error:mvErr } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:myColor }]);
+    if (mvErr) {
+      toast('착수 실패: ' + mvErr.message);
+      await sb.from('rooms').update(prev ? { turn:myColor, state:prev } : { turn:myColor }).eq('id', roomId);
+    }
+  } finally { placing = false; }
 }
 
 function countLine(r, c, dr, dc, color) {
@@ -843,7 +1028,7 @@ $('ai-go').onclick = async () => {
 };
 
 function startAi(color) {
-  stopPolling(); gameMode = 'ai'; roomId = null; rs = aiItemMode ? newState() : null; pending = null;
+  stopPolling(); gameMode = 'ai'; roomId = null; rs = aiItemMode ? newState() : null; pending = null; acting = false; placing = false; fxBusy = false;
   myColor = color; aiColor = oppOf(color); oppName = `AI (${AI_LBL[aiLevel]})`;
   roomStatus = 'playing'; currentTurn = 'black'; aiOver = false; aiThinking = false; boardState = empty(); lastPos = { black:null, white:null };
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
@@ -854,6 +1039,11 @@ function startAi(color) {
 }
 
 function placeAi(r, c, color) {
+  const mn = rs && rs.mines ? rs.mines[oppOf(color)] : null, mi = mn ? mn.findIndex(([a, b]) => a === r && b === c) : -1;
+  if (mi >= 0) {
+    mn.splice(mi, 1); playFx('mine', r, c); toast(color === myColor ? '🧨 지뢰를 밟았어요! 돌이 사라졌어요' : '🧨 AI가 지뢰를 밟았어요!');
+    currentTurn = oppOf(color); drawMines(); updateTurnUI(); updateCards(); return 'trap';
+  }
   boardState[r][c] = color; renderStone(r, c, color); currentTurn = oppOf(color); lastPos[color] = [r, c];
   if (isFive(r, c, color)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(color, true), 400); return true; }
   if (boardState.every(row => row.every(x => x !== null))) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver('draw', true), 400); return true; }
@@ -863,6 +1053,7 @@ function placeAi(r, c, color) {
 function redrawLocal() {
   initBoard();
   for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c]) renderStone(r, c, boardState[r][c], true);
+  drawMines();
 }
 
 function maxThreat(col) {
@@ -876,20 +1067,35 @@ function maxThreat(col) {
 async function aiUseItem() {
   if (!rs) return false;
   const ai = aiColor, me = myColor, inv = rs.inv[ai];
+  if (rs.fz && rs.fz[ai]) return false;
   if (!inv.length || Math.random() < { easy:.5, normal:.2, hard:0 }[aiLevel]) return false;
   const th = maxThreat(me), mine = maxThreat(ai).s, has = k => inv.includes(k), danger = th.s >= 1200;
   const lp = lastPos[me], lpOk = lp && boardState[lp[0]][lp[1]] === me;
+  const dLock = rs.ld[ai] || rs.dbl[ai] || rs.du[ai];
+  const nBlocks = boardState.flat().filter(v => v === 'block').length;
   if (mine >= 100000) return false;
   let use = null;
   if (danger && has('bomb')) use = 'bomb';
   else if (danger && has('convert')) use = 'convert';
   else if (danger && has('meteor')) use = 'meteor';
+  else if (danger && has('fire')) use = 'fire';
+  else if (danger && has('wave')) use = 'wave';
+  else if (danger && has('slash')) use = 'slash';
   else if (th.s >= 10000 && has('rewind') && lpOk) use = 'rewind';
   else if (danger && has('block')) use = 'block';
   else if (has('shield') && !rs.sd[ai] && rs.inv[me].some(x => BLOCKABLE.includes(x))) use = 'shield';
-  else if (mine >= 1200 && has('double')) use = 'double';
+  else if (mine >= 1200 && has('double') && !dLock) use = 'double';
+  else if (has('freeze') && rs.inv[me].length >= 2 && !rs.fz[me]) use = 'freeze';
+  else if (has('mine') && Math.random() < .6) use = 'mine';
+  else if (has('detect') && (rs.mines[me] || []).length) use = 'detect';
+  else if (has('sweep') && nBlocks >= 2) use = 'sweep';
   else if (has('thief') && rs.inv[me].length) use = 'thief';
+  else if (has('storm') && stonesOf(me).length >= 6 && Math.random() < .5) use = 'storm';
   else if (has('dice') && inv.length <= 2) use = 'dice';
+  else if (has('luck') && inv.length <= 1) use = 'luck';
+  else if (has('reroll') && inv.length >= 2 && Math.random() < .5) use = 'reroll';
+  else if (has('peek') && inv.length >= 3) use = 'peek';
+  else if (has('oracle') && inv.length >= 3) use = 'oracle';
   if (!use) return false;
 
   inv.splice(inv.indexOf(use), 1);
@@ -908,23 +1114,37 @@ async function aiUseItem() {
       boardState[pick[0]][pick[1]] = use === 'convert' ? ai : null; redrawLocal();
       if (use === 'convert' && isFive(pick[0], pick[1], ai)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(ai, true), 400); return 'end'; }
     }
-  } else if (use === 'meteor') {
+  } else if (use === 'meteor' || use === 'fire' || use === 'wave' || use === 'slash') {
     let pick = null, low = Infinity;
     for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
-      const hit = [];
-      for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) if (inB(a, b) && boardState[a][b] === me) hit.push([a, b]);
+      const hit = areaCells(use, r, c, me);
       if (!hit.length) continue;
       hit.forEach(([a, b]) => boardState[a][b] = null); const t = maxThreat(me).s; hit.forEach(([a, b]) => boardState[a][b] = me);
       if (t < low) { low = t; pick = [r, c, hit]; }
     }
-    if (pick) { playFx('meteor', pick[0], pick[1], ai); await sleep(900); pick[2].forEach(([a, b]) => boardState[a][b] = null); redrawLocal(); }
+    if (pick) { playFx(use, pick[0], pick[1], ai); await sleep(fxWait(use)); pick[2].forEach(([a, b]) => boardState[a][b] = null); redrawLocal(); }
+  } else if (use === 'storm') {
+    const lst = pickStones(me, 3);
+    playFx('storm', null, null, ai, lst); await sleep(fxWait('storm'));
+    lst.forEach(([a, b]) => boardState[a][b] = null); redrawLocal();
   } else if (use === 'rewind') {
     playFx('rewind', lp[0], lp[1], ai); await sleep(480); boardState[lp[0]][lp[1]] = null; lastPos[me] = null; redrawLocal();
   } else if (use === 'block') {
     boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
   } else if (use === 'shield') { rs.sd[ai] = 1; playFx('shield'); await sleep(400); }
-  else if (use === 'double') { playFx('double'); await sleep(350); }
-  else if (use === 'thief') {
+  else if (use === 'freeze') { rs.fz[me] = 1; playFx('freeze'); await sleep(400); }
+  else if (use === 'double') { rs.du[ai] = 1; playFx('double'); await sleep(350); }
+  else if (use === 'mine') { const [mr, mc] = bestCell(me); rs.mines[ai].push([mr, mc]); }
+  else if (use === 'detect') {
+    const n = rs.mines[me].length; rs.mines[me] = []; playFx('detect'); toast(`🔍 AI가 지뢰 ${n}개를 찾아 없앴다!`); await sleep(400);
+  }
+  else if (use === 'luck') { rs.n[ai] += (2 - rs.n[ai] % 3 + 3) % 3; playFx('luck'); await sleep(350); }
+  else if (use === 'reroll') { for (let i = 0; i < inv.length; i++) inv[i] = rnd('reroll'); playFx('reroll'); await sleep(350); }
+  else if (use === 'sweep') {
+    playFx('sweep'); await sleep(500);
+    for (let a = 0; a < 15; a++) for (let b = 0; b < 15; b++) if (boardState[a][b] === 'block') boardState[a][b] = null;
+    redrawLocal();
+  } else if (use === 'thief') {
     const oi = rs.inv[me], it = oi.splice(Math.floor(Math.random() * oi.length), 1)[0];
     if (inv.length < 3) inv.push(it); playFx('thief'); await sleep(400);
   } else if (use === 'dice') {
@@ -943,6 +1163,7 @@ function aiMove() {
     if (dbl === 'end') { aiThinking = false; return; }
     let ended = false;
     for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
+    if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
     if (rs && !ended) {
       rs.n[aiColor]++;
       if (rs.n[aiColor] % 3 === 0 && rs.inv[aiColor].length < 3) rs.inv[aiColor].push(rnd());
