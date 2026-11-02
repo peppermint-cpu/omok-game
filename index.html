@@ -82,6 +82,7 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 .st.block::before{content:'🧱'}
 .dot{position:absolute;z-index:3;width:24%;height:24%;border-radius:50%;background:var(--red);pointer-events:none}
 @keyframes drop{from{transform:scale(1.5);opacity:0}}
+.st.hole{width:104%;height:104%;border-radius:0;background:radial-gradient(circle,#000 35%,#2a170a 100%);box-shadow:inset 0 0 14px #000}
 #fx{position:absolute;inset:0;pointer-events:none;z-index:30;overflow:hidden;border-radius:11px}
 .fx{position:absolute;transform:translate(-50%,-50%)}
 .ring{width:16px;height:16px;border-radius:50%;border:4px solid #ffd166;animation:ring .55s ease-out forwards}
@@ -183,7 +184,7 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
       <label class="tg"><input type="checkbox" id="o-item">⚡ 아이템전</label>
     </div>
     <input type="password" id="r-pw" class="hidden" placeholder="비밀번호 (4자 이상)" maxlength="20">
-    <div class="mu" id="item-desc" style="display:none">☢️ 🏯 🗼 🏰 🎯 🌋 🔀 💣 🧱 ⚡ ☄️ 🛡️ 🌪️ … 28가지 아이템! 돌 3개마다 획득</div>
+    <div class="mu" id="item-desc" style="display:none">☢️ 🏗️ 🎰 🪤 ⛈️ 🔨 🌋 🔀 💣 🧱 ⚡ ☄️ 🛡️ … 34가지 아이템! 돌 3개마다 획득 (한 턴에 아이템은 여러 번 OK, 단 아이템을 쓰면 그 턴엔 돌을 못 둬요)</div>
     <button id="create" class="btn gold">방 만들기 (흑돌)</button>
   </div>
 
@@ -206,6 +207,7 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
   <div class="wrap"><div id="board"></div><div id="fx"></div></div>
   <div id="items" class="items hidden"></div>
   <div id="hint" class="hidden"></div>
+  <button id="endturn" class="btn ghost hidden" onclick="endTurn()">⏭️ 턴 넘기기</button>
   <div id="my-card" class="pc">
     <div id="my-si" class="si black"></div>
     <div class="grow"><div><span id="my-nm" class="nm" style="color:var(--gold)"></span><span id="my-tier" class="chip"></span></div><div id="my-tro" class="tiny"></div></div>
@@ -252,18 +254,26 @@ const ITEMS = {
   luck:   { i:'🍀', n:'행운',    d:'돌을 한 번만 더 두면 바로 아이템을 받아요' },
   reroll: { i:'♻️', n:'재구성',  d:'내 다른 아이템을 모두 새 랜덤 아이템으로 바꿔요' },
   thief:  { i:'🦝', n:'도둑',    d:'상대 아이템 1개를 훔쳐요' },
-  nuke:   { i:'☢️', n:'핵무기',  t:1, rare:1, d:'터치한 곳 7×7 안의 상대 돌을 모조리 증발시켜요 (아주 희귀!)' },
+  nuke:   { i:'☢️', n:'핵무기',  t:1, rare:1, d:'터치한 곳 7×7 안의 상대 돌을 증발시키고, 2×2 구멍을 영구히 뚫어요 (터치한 칸이 왼쪽 위 · 아주 희귀!)' },
   wall:   { i:'🏯', n:'장벽',    t:1, d:'터치한 칸 기준 가로 5칸을 영구히 막아요' },
   pillar: { i:'🗼', n:'세로장벽', t:1, d:'터치한 칸 기준 세로 5칸을 영구히 막아요' },
   fort:   { i:'🏰', n:'포위',    t:1, d:'터치한 칸 주변 8칸을 영구히 막아요' },
   cross:  { i:'🎯', n:'십자포화', t:1, d:'터치한 칸의 가로줄+세로줄에 있는 상대 돌을 모두 파괴해요' },
   quake:  { i:'🌋', n:'지진',    d:'상대 돌 무작위 5개를 무너뜨려요' },
-  swap:   { i:'🔀', n:'맞바꿈',  d:'내 아이템과 상대 아이템을 통째로 맞바꿔요' }
+  swap:   { i:'🔀', n:'맞바꿈',  d:'내 아이템과 상대 아이템을 통째로 맞바꿔요' },
+  gwall:  { i:'🏗️', n:'만리장성', t:1, d:'터치한 칸 기준 가로 9칸을 영구히 막아요' },
+  gpillar:{ i:'🪜', n:'세로성벽', t:1, d:'터치한 칸 기준 세로 9칸을 영구히 막아요' },
+  thunder:{ i:'⛈️', n:'낙뢰',    t:1, d:'터치한 칸과 상하좌우(십자 5칸)의 상대 돌을 파괴해요' },
+  field:  { i:'🪤', n:'지뢰밭',  t:1, d:'터치한 곳 3×3 빈 칸 전부에 지뢰를 묻어요 (나만 보여요)' },
+  jackpot:{ i:'🎰', n:'잭팟',    d:'아이템 칸을 랜덤 아이템으로 가득 채워요' },
+  smash:  { i:'🔨', n:'방패파쇄', d:'상대의 방어막을 깨뜨려요' }
 };
+const holeCells = (r, c) => { const a = Math.min(r, 13), b = Math.min(c, 13); return [[a, b], [a, b + 1], [a + 1, b], [a + 1, b + 1]]; };
+const applyHoles = () => ((rs && rs.holes) || []).forEach(([a, b]) => { boardState[a][b] = 'hole'; renderStone(a, b, 'hole', true); });
 const wallCells = (t, r, c) => {
   const o = [];
   if (t === 'fort') { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) if (i || j) o.push([r + i, c + j]); }
-  else for (let i = -2; i <= 2; i++) o.push(t === 'wall' ? [r, c + i] : [r + i, c]);
+  else { const n = t[0] === 'g' ? 4 : 2, hz = t === 'wall' || t === 'gwall'; for (let i = -n; i <= n; i++) o.push(hz ? [r, c + i] : [r + i, c]); }
   return o.filter(([a, b]) => a >= 0 && a < 15 && b >= 0 && b < 15 && boardState[a][b] === null);
 };
 const fxCell = (lr, a, b) => {
@@ -271,15 +281,15 @@ const fxCell = (lr, a, b) => {
   const cr = cl.getBoundingClientRect();
   return { cl, x: cr.left - lr.left + cr.width / 2, y: cr.top - lr.top + cr.height / 2 };
 };
-const BLOCKABLE = ['bomb', 'convert', 'meteor', 'fire', 'wave', 'slash', 'storm', 'rewind', 'thief', 'freeze', 'nuke', 'cross', 'quake', 'swap'];
+const BLOCKABLE = ['bomb', 'convert', 'meteor', 'fire', 'wave', 'slash', 'storm', 'rewind', 'thief', 'freeze', 'nuke', 'cross', 'quake', 'swap', 'thunder'];
 const rnd = ex => {
   const k = Object.keys(ITEMS).filter(x => x !== ex), w = k.map(x => ITEMS[x].rare ? .3 : 1);
   let n = Math.random() * w.reduce((a, b) => a + b, 0);
   for (let i = 0; i < k.length; i++) { n -= w[i]; if (n <= 0) return k[i]; }
   return k[k.length - 1];
 };
-const norm = s => { ['sd','fz','ld','du'].forEach(k => s[k] = s[k] || { black:0, white:0 }); s.mines = s.mines || { black:[], white:[] }; };
-const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, sd:{ black:0, white:0 }, fz:{ black:0, white:0 }, ld:{ black:0, white:0 }, du:{ black:0, white:0 }, mines:{ black:[], white:[] }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
+const norm = s => { ['sd','fz','ld','du'].forEach(k => s[k] = s[k] || { black:0, white:0 }); s.mines = s.mines || { black:[], white:[] }; s.holes = s.holes || []; };
+const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, sd:{ black:0, white:0 }, fz:{ black:0, white:0 }, ld:{ black:0, white:0 }, du:{ black:0, white:0 }, mines:{ black:[], white:[] }, n:{ black:0, white:0 }, u:0, v:0, b:0, holes:[], msg:'' });
 // acting: 아이템 사용/착수가 끝나기 전에는 다른 클릭을 모두 무시하는 잠금
 let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0, acting = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -430,7 +440,7 @@ function renderStone(r, c, color, quiet) {
   if (!cell) return;
   cell.querySelectorAll('.st,.dot').forEach(e => e.remove());
   cell.appendChild(h('div', 'st ' + color + (quiet ? '' : ' new')));
-  if (color !== 'block') {
+  if (color !== 'block' && color !== 'hole') {
     $('board').querySelectorAll('.dot').forEach(e => e.remove());
     cell.appendChild(h('div', 'dot'));
   }
@@ -440,7 +450,7 @@ async function syncBoard() {
   const { data } = await sb.from('moves').select('*').eq('room_id', roomId).order('created_at', { ascending:true });
   boardState = empty(); initBoard();
   (data || []).forEach(m => { boardState[m.row][m.col] = m.color; renderStone(m.row, m.col, m.color, true); });
-  drawMines();
+  applyHoles(); drawMines();
 }
 
 // ===== 방 만들기 / 입장 =====
@@ -627,7 +637,7 @@ function updateTurnUI() {
 function renderItems() {
   drawMines();
   const bar = $('items'), hint = $('hint');
-  if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); return; }
+  if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
   const inv = rs.inv[myColor];
   for (let k = 0; k < 3; k++) {
@@ -638,7 +648,9 @@ function renderItems() {
   }
   prevInv = inv.length;
   const sh = rs.sd && rs.sd[myColor] ? '🛡️ 방어막 활성 · ' : '';
-  hint.textContent = rs.dbl[myColor] ? '⚡ 연속 착수 중! 돌을 두 번 놓을 수 있어요'
+  $('endturn').classList.toggle('hidden', !(rs.u && !rs.dbl[myColor] && currentTurn === myColor && roomStatus === 'playing'));
+  hint.textContent = rs.u && !pending && !rs.dbl[myColor] && currentTurn === myColor ? '🛠️ 아이템 사용 중 — 더 쓰거나 「턴 넘기기」를 누르세요 (돌은 못 둬요)'
+    : rs.dbl[myColor] ? '⚡ 연속 착수 중! 돌을 두 번 놓을 수 있어요'
     : pending ? `${ITEMS[pending].i} ${ITEMS[pending].d}${ITEMS[pending].t ? ' — 판을 터치하세요' : ' — 한 번 더 누르면 사용'}`
     : sh + '돌 3개마다 아이템 획득 · 눌러서 설명 보기';
 }
@@ -724,6 +736,17 @@ function playFx(t, r, c, by, list) {
     setTimeout(shake, 200);
   }
   else if (t === 'swap') { add('em big', cx, cy, '🔀'); burst(cx, cy, ['#b28dff', '#ffffff'], 14); }
+  else if (t === 'thunder') {
+    [[r, c], [r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]].forEach(([a, b], i) => setTimeout(() => {
+      const p = fxCell(lr, a, b); if (!p) return;
+      add('em sm', p.x, p.y, '⛈️'); burst(p.x, p.y, ['#ffd166', '#ffffff'], 6);
+      const st = p.cl.querySelector('.st.' + oppOf(by)); if (st) st.classList.add('boom');
+    }, i * 60));
+    shake();
+  }
+  else if (t === 'jackpot') { add('em big', cx, cy, '🎰'); burst(cx, cy, ['#ffd166', '#ff5d73', '#19c39a'], 18); }
+  else if (t === 'smash') { add('em big', cx, cy, '🔨'); burst(cx, cy, ['#7fb2ff', '#ffffff'], 14); shake(); }
+  else if (t === 'field') { for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) { const p = fxCell(lr, a, b); if (p) add('em sm', p.x, p.y, '🪤'); } }
   else if (t === 'oracle') add('orc', x, y, '', 4000);
 }
 
@@ -764,6 +787,22 @@ async function blocked(t) {
   return true;
 }
 
+async function endTurn() {
+  if (uiLocked() || !rs || !rs.u || currentTurn !== myColor || roomStatus !== 'playing') return;
+  const me = myColor, opp = oppOf(me);
+  placing = true;
+  try {
+    const s = structuredClone(rs); norm(s);
+    s.u = 0; s.ld[me] = s.du[me]; s.du[me] = 0; s.fz[me] = 0; s.v++; s.fx = null; s.msg = `${myNickname}님이 턴을 넘겼어요`;
+    if (gameMode === 'online') {
+      const { data, error } = await sb.from('rooms').update({ turn:opp, state:s }).eq('id', roomId).eq('turn', me).select('id');
+      if (error || !data || !data.length) return toast(error ? '턴 넘기기 실패: ' + error.message : '지금은 내 차례가 아니에요.');
+    }
+    rs = s; currentTurn = opp; setPending(null); updateTurnUI(); renderItems(); updateCards();
+    if (gameMode === 'ai') aiMove();
+  } finally { placing = false; }
+}
+
 function bestCell(col) {
   let b = [7, 7], bs = -1;
   for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === null && near(r, c, 2)) {
@@ -794,7 +833,8 @@ async function pickItem(t) {
   if (!rs || roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
   if (!rs.inv[myColor].includes(t)) return;
   if (rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
-  if (rs.u) return toast('이번 턴에는 이미 아이템을 썼어요.');
+  if (rs.dbl[myColor]) return toast('⚡ 연속 착수 중에는 아이템을 쓸 수 없어요!');
+  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
   if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
   if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
@@ -809,8 +849,10 @@ async function useInstant(t) {
 
 async function runInstant(t) {
   const me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
-  if (!rs || rs.u || !rs.inv[me].includes(t)) return;
+  if (!rs || !rs.inv[me].includes(t)) return;
   if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
+  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (t === 'smash' && !(rs.sd && rs.sd[opp])) return toast('상대에게 방어막이 없어요!');
   if (t === 'thief' && !rs.inv[opp].length) return toast('훔칠 아이템이 없어요!');
   if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
   if (t === 'quake' || t === 'swap') {
@@ -890,8 +932,10 @@ async function runInstant(t) {
   playFx(t);
   await commitItem(t, s => {
     s.fx = { k, t };
-    if (t === 'double') { s.dbl[me] = 1; s.du[me] = 1; }
+    if (t === 'double') { s.dbl[me] = 1; s.du[me] = 1; s.u = 0; }
     if (t === 'shield') s.sd[me] = 1;
+    if (t === 'smash') s.sd[opp] = 0;
+    if (t === 'jackpot') while (s.inv[me].length < 3) s.inv[me].push(rnd('jackpot'));
     if (t === 'freeze') s.fz[opp] = 1;
     if (t === 'dice') for (let i = 0; i < 2; i++) if (s.inv[me].length < 3) s.inv[me].push(rnd('dice'));
     if (t === 'luck') s.n[me] += (2 - s.n[me] % 3 + 3) % 3;
@@ -908,7 +952,7 @@ async function runInstant(t) {
   });
 }
 
-const fxWait = t => ({ meteor:900, fire:1000, wave:1000, slash:1000, storm:1100, nuke:1100, cross:1000, quake:1500 })[t] || 480;
+const fxWait = t => ({ meteor:900, fire:1000, wave:1000, slash:1000, storm:1100, nuke:1100, cross:1000, quake:1500, thunder:700 })[t] || 480;
 
 // 범위 판정 (해당 칸 (a,b)가 터치한 칸 (r,c) 기준 범위 안인지)
 function inArea(t, a, b, r, c) {
@@ -918,6 +962,7 @@ function inArea(t, a, b, r, c) {
   if (t === 'slash') return Math.abs(a - r) === Math.abs(b - c);
   if (t === 'nuke') return Math.abs(a - r) <= 3 && Math.abs(b - c) <= 3;
   if (t === 'cross') return a === r || b === c;
+  if (t === 'thunder') return (a === r && Math.abs(b - c) <= 1) || (b === c && Math.abs(a - r) <= 1);
   return a === r && b === c;
 }
 // 범위 안에서 col 색 돌이 있는 칸들
@@ -946,8 +991,36 @@ async function useCellItem(r, c) {
 async function runCellItem(r, c) {
   const t = pending, me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
   if (!t || !rs || !rs.inv[me].includes(t)) return setPending(null);
-  if (rs.u) { setPending(null); return toast('이번 턴에는 이미 아이템을 썼어요.'); }
-  if (t === 'wall' || t === 'pillar' || t === 'fort') {
+  if (t === 'field') {
+    const cs = [];
+    for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++)
+      if (inB(a, b) && boardState[a][b] === null && !((rs.mines && rs.mines[me]) || []).some(([x, y]) => x === a && y === b)) cs.push([a, b]);
+    if (!cs.length) return toast('지뢰를 묻을 빈 칸이 없어요!');
+    playFx('field', r, c);
+    await commitItem('field', s => { cs.forEach(q => s.mines[me].push(q)); s.msg = `${myNickname}: 🪤 지뢰밭을 만들었다!`; });
+    return drawMines();
+  }
+  if (t === 'nuke') {
+    const hole = holeCells(r, c), cells = areaCells(t, r, c, opp);
+    if (await blocked(t)) return;
+    fxBusy = true; setTimeout(() => fxBusy = false, 1800);
+    setPending(null); playFx(t, r, c); await sleep(fxWait(t));
+    const del = cells.concat(hole.filter(([a, b]) => boardState[a][b] !== null && boardState[a][b] !== 'hole' && !cells.some(([x, y]) => x === a && y === b)));
+    if (!ai && del.length) {
+      const res = await Promise.all(del.map(([a, b]) => sb.from('moves').delete().eq('room_id', roomId).eq('row', a).eq('col', b)));
+      const bad = res.find(x => x.error);
+      if (bad) { syncBoard(); return toast('실패: ' + bad.error.message); }
+    }
+    cells.forEach(([a, b]) => boardState[a][b] = null);
+    const ok = await commitItem(t, s => {
+      s.holes = s.holes || [];
+      hole.forEach(([a, b]) => { if (!s.holes.some(([x, y]) => x === a && y === b)) s.holes.push([a, b]); });
+      s.b++; s.fx = { k, t, r, c };
+    });
+    if (ai) redrawLocal(); else syncBoard();
+    return ok;
+  }
+  if (t === 'wall' || t === 'pillar' || t === 'fort' || t === 'gwall' || t === 'gpillar') {
     const cs = wallCells(t, r, c);
     if (!cs.length) return toast('막을 빈 칸이 없어요!');
     fxBusy = true; setTimeout(() => fxBusy = false, 900); setPending(null);
@@ -1006,6 +1079,7 @@ async function handleCell(r, c) {
     if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
     if (pending && ITEMS[pending].t) return useCellItem(r, c);
     if (boardState[r][c] !== null) return;
+    if (rs && rs.u) return toast('아이템을 쓴 턴에는 돌을 둘 수 없어요. ⏭️ 턴 넘기기를 눌러주세요!');
     const dbl = rs && rs.dbl[myColor];
     if (rs) {
       rs.n[myColor]++;
@@ -1025,6 +1099,7 @@ async function handleCell(r, c) {
   if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
   if (pending && ITEMS[pending].t) return useCellItem(r, c);
   if (boardState[r][c] !== null) return;
+  if (rs && rs.u) return toast('아이템을 쓴 턴에는 돌을 둘 수 없어요. ⏭️ 턴 넘기기를 눌러주세요!');
 
   if (placing) return;
   placing = true;
@@ -1140,7 +1215,7 @@ function placeAi(r, c, color) {
 function redrawLocal() {
   initBoard();
   for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c]) renderStone(r, c, boardState[r][c], true);
-  drawMines();
+  applyHoles(); drawMines();
 }
 
 function maxThreat(col) {
@@ -1151,7 +1226,7 @@ function maxThreat(col) {
 }
 
 // AI가 아이템을 쓸지 판단하고 사용한다. 연속착수를 썼으면 true
-async function aiUseItem() {
+async function aiUseItem(used) {
   if (!rs) return false;
   const ai = aiColor, me = myColor, inv = rs.inv[ai];
   if (rs.fz && rs.fz[ai]) return false;
@@ -1173,12 +1248,18 @@ async function aiUseItem() {
   else if (danger && has('wall')) use = 'wall';
   else if (danger && has('pillar')) use = 'pillar';
   else if (danger && has('fort')) use = 'fort';
+  else if (danger && has('gwall')) use = 'gwall';
+  else if (danger && has('gpillar')) use = 'gpillar';
+  else if (danger && has('thunder')) use = 'thunder';
+  else if (has('smash') && rs.sd[me]) use = 'smash';
+  else if (has('jackpot') && inv.length <= 1) use = 'jackpot';
+  else if (has('field') && Math.random() < .5) use = 'field';
   else if (has('swap') && rs.inv[me].length > inv.length) use = 'swap';
   else if (has('quake') && stonesOf(me).length >= 8 && Math.random() < .5) use = 'quake';
   else if (th.s >= 10000 && has('rewind') && lpOk) use = 'rewind';
   else if (danger && has('block')) use = 'block';
   else if (has('shield') && !rs.sd[ai] && rs.inv[me].some(x => BLOCKABLE.includes(x))) use = 'shield';
-  else if (mine >= 1200 && has('double') && !dLock) use = 'double';
+  else if (mine >= 1200 && has('double') && !dLock && !used) use = 'double';
   else if (has('freeze') && rs.inv[me].length >= 2 && !rs.fz[me]) use = 'freeze';
   else if (has('mine') && Math.random() < .6) use = 'mine';
   else if (has('detect') && (rs.mines[me] || []).length) use = 'detect';
@@ -1192,10 +1273,11 @@ async function aiUseItem() {
   else if (has('oracle') && inv.length >= 3) use = 'oracle';
   if (!use) return false;
 
+  if (!danger && use !== 'double' && inv.length < 3 && Math.random() < .6) return false;
   inv.splice(inv.indexOf(use), 1);
   toast(`🤖 AI: ${ITEMS[use].i} ${ITEMS[use].n} 사용!`);
   if (BLOCKABLE.includes(use) && rs.sd[me]) {
-    rs.sd[me] = 0; playFx('shield'); toast('🛡️ 방어막이 AI의 공격을 막았다!'); await sleep(600); updateCards(); renderItems(); return false;
+    rs.sd[me] = 0; playFx('shield'); toast('🛡️ 방어막이 AI의 공격을 막았다!'); await sleep(600); updateCards(); renderItems(); return 'used';
   }
   if (use === 'bomb' || use === 'convert') {
     let pick = null, low = Infinity;
@@ -1208,7 +1290,7 @@ async function aiUseItem() {
       boardState[pick[0]][pick[1]] = use === 'convert' ? ai : null; redrawLocal();
       if (use === 'convert' && isFive(pick[0], pick[1], ai)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(ai, true), 400); return 'end'; }
     }
-  } else if (use === 'meteor' || use === 'fire' || use === 'wave' || use === 'slash' || use === 'nuke' || use === 'cross') {
+  } else if (use === 'meteor' || use === 'fire' || use === 'wave' || use === 'slash' || use === 'nuke' || use === 'cross' || use === 'thunder') {
     let pick = null, low = Infinity;
     for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
       const hit = areaCells(use, r, c, me);
@@ -1216,16 +1298,26 @@ async function aiUseItem() {
       hit.forEach(([a, b]) => boardState[a][b] = null); const t = maxThreat(me).s; hit.forEach(([a, b]) => boardState[a][b] = me);
       if (t < low) { low = t; pick = [r, c, hit]; }
     }
-    if (pick) { playFx(use, pick[0], pick[1], ai); await sleep(fxWait(use)); pick[2].forEach(([a, b]) => boardState[a][b] = null); redrawLocal(); }
+    if (pick) {
+      playFx(use, pick[0], pick[1], ai); await sleep(fxWait(use)); pick[2].forEach(([a, b]) => boardState[a][b] = null);
+      if (use === 'nuke') holeCells(pick[0], pick[1]).forEach(([a, b]) => { boardState[a][b] = 'hole'; if (!rs.holes.some(([x, y]) => x === a && y === b)) rs.holes.push([a, b]); });
+      redrawLocal();
+    }
   } else if (use === 'quake') {
     const lst = pickStones(me, 5);
     playFx('quake', null, null, ai, lst); await sleep(fxWait('quake'));
     lst.forEach(([a, b]) => boardState[a][b] = null); redrawLocal();
-  } else if (use === 'wall' || use === 'pillar' || use === 'fort') {
+  } else if (use === 'wall' || use === 'pillar' || use === 'fort' || use === 'gwall' || use === 'gpillar') {
     const cs = wallCells(use, th.r, th.c);
     cs.forEach(([a, b]) => { boardState[a][b] = 'block'; renderStone(a, b, 'block'); });
     playFx('wall', th.r, th.c, ai, cs); await sleep(500);
-  } else if (use === 'swap') {
+  } else if (use === 'smash') { rs.sd[me] = 0; playFx('smash'); await sleep(400); }
+  else if (use === 'jackpot') { while (inv.length < 3) inv.push(rnd('jackpot')); playFx('jackpot'); await sleep(400); }
+  else if (use === 'field') {
+    const [mr, mc] = bestCell(me);
+    for (let a = mr - 1; a <= mr + 1; a++) for (let b = mc - 1; b <= mc + 1; b++) if (inB(a, b) && boardState[a][b] === null && !rs.mines[ai].some(([x, y]) => x === a && y === b)) rs.mines[ai].push([a, b]);
+  }
+  else if (use === 'swap') {
     const tmp = rs.inv[ai]; rs.inv[ai] = rs.inv[me]; rs.inv[me] = tmp; playFx('swap'); await sleep(400);
   } else if (use === 'storm') {
     const lst = pickStones(me, 3);
@@ -1256,15 +1348,25 @@ async function aiUseItem() {
     playFx('dice'); await sleep(400);
   }
   updateCards(); renderItems();
-  return use === 'double';
+  return use === 'double' ? 'double' : 'used';
 }
 
 function aiMove() {
   aiThinking = true;
   setTimeout(async () => {
     if (aiOver) { aiThinking = false; return; }
-    const dbl = await aiUseItem();
-    if (dbl === 'end') { aiThinking = false; return; }
+    let dbl = false, used = false;
+    for (let n = 0; n < 2 && !dbl; n++) {
+      const res = await aiUseItem(used);
+      if (res === 'end') { aiThinking = false; return; }
+      if (!res) break;
+      if (res === 'double') dbl = true; else used = true;
+    }
+    if (used && !dbl) {
+      if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
+      currentTurn = myColor; aiThinking = false; toast('🤖 AI가 턴을 넘겼어요');
+      updateTurnUI(); updateCards(); renderItems(); return;
+    }
     let ended = false;
     for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
     if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
