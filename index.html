@@ -27,7 +27,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0}
 button:disabled{opacity:.5;cursor:not-allowed}
 input,select{font:inherit;color:var(--tx);background:#0f1330;border:1px solid var(--bd);border-radius:12px;padding:12px;width:100%;outline:0}
 input:focus,select:focus{border-color:var(--gold)}
-.app{width:100%;max-width:440px;padding:16px 14px 30px}
+.app{width:100%;max-width:440px;padding:max(16px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(30px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
 .hidden{display:none!important}
 .col{display:flex;flex-direction:column;gap:10px}
 .row{display:flex;align-items:center;gap:10px}
@@ -130,6 +130,52 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 .ov .box{width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px}
 #r-title{font-family:'Black Han Sans',sans-serif;font-size:56px}
 .tro{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:12px 28px;text-align:center}
+/* ===== 반응형: 모바일 / 태블릿 / PC ===== */
+html{-webkit-text-size-adjust:100%}
+*{-webkit-tap-highlight-color:transparent}
+button{touch-action:manipulation}
+.wrap{container-type:inline-size;width:clamp(260px,calc(100dvh - 340px),100%);margin:0 auto}
+.st.block{font-size:clamp(9px,3.4cqw,22px)}
+.mk{font-size:clamp(10px,3.4cqw,22px)}
+.em{font-size:clamp(30px,10cqw,66px)}
+.em.big{font-size:clamp(56px,19cqw,130px)}
+.em.sm{font-size:clamp(18px,6.5cqw,40px)}
+.met{font-size:clamp(30px,9cqw,60px)}
+@media (hover:hover){
+  .btn:hover{filter:brightness(1.1)}
+  .tab:hover,.slot:not(.empty):hover{color:var(--gold);border-color:var(--gold)}
+  .cell:not(:has(.st)):hover{background:radial-gradient(circle,#ffffff66 0 36%,transparent 40%)}
+}
+/* 태블릿 세로 / 큰 폰 */
+@media (min-width:600px){
+  .app{max-width:560px}
+  .app:has(#game:not(.hidden)){max-width:680px}
+  h1{font-size:36px;margin-bottom:16px}
+  .card{padding:18px}
+  .btn{padding:15px}
+  .nm{font-size:16px}
+  #room-list{max-height:420px!important}
+}
+/* 가로 화면(태블릿·PC·가로 폰): 왼쪽 보드 + 오른쪽 정보 패널 */
+@media (orientation:landscape) and (min-width:600px),(min-width:1100px){
+  .app:has(#game:not(.hidden)){max-width:1120px}
+  #game:not(.hidden){display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);grid-template-rows:repeat(8,auto) 1fr;column-gap:22px;row-gap:10px;align-items:start;align-content:start}
+  #game>*{grid-column:2}
+  #game>.wrap{grid-column:1;grid-row:1/-1;width:min(100%,max(300px,calc(100dvh - 110px)));justify-self:center}
+}
+@media (min-width:1100px){
+  h1{font-size:42px}
+  .app{max-width:600px}
+}
+/* 낮은 화면(가로 폰) */
+@media (max-height:480px){
+  h1{font-size:22px;margin-bottom:6px}
+  .pc{padding:6px 10px}
+  .av{width:38px;height:38px;font-size:20px}
+  .slot{min-height:46px;padding:4px 0}
+  .slot .ico{font-size:18px}
+  .btn{padding:10px}
+}
 @media(prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
