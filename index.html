@@ -100,6 +100,14 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 @keyframes shake{20%{transform:translate(-4px,2px)}40%{transform:translate(4px,-3px)}60%{transform:translate(-3px,-2px)}80%{transform:translate(2px,2px)}}
 .slot.pop{animation:pop .6s}
 @keyframes pop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.25);box-shadow:0 0 18px var(--gold)}100%{transform:none}}
+.st.flip{animation:flip .5s forwards}
+@keyframes flip{50%{transform:rotateY(90deg) scale(1.25);filter:brightness(2.2)}100%{transform:rotateY(0)}}
+.flash.blue{background:radial-gradient(circle,#cfe6ffcc,#4c6fff66 55%,transparent 78%)}
+.em.big{font-size:84px}
+.met{font-size:40px;animation:met .45s ease-in forwards}
+@keyframes met{from{transform:translate(calc(-50% - 130px),calc(-50% - 230px)) scale(.5)}to{transform:translate(-50%,-50%) scale(1.2)}}
+.orc{width:34px;height:34px;border:3px solid #b28dff;border-radius:50%;box-shadow:0 0 14px #b28dff,inset 0 0 8px #b28dff;animation:orc .8s infinite alternate}
+@keyframes orc{to{transform:translate(-50%,-50%) scale(1.35);opacity:.5}}
 @keyframes pl{50%{transform:scale(.78)}}
 .tg-black .st.black,.tg-white .st.white{animation:pl .7s infinite;box-shadow:0 0 0 2px var(--red)}
 .items{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -172,7 +180,7 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
       <label class="tg"><input type="checkbox" id="o-item">⚡ 아이템전</label>
     </div>
     <input type="password" id="r-pw" class="hidden" placeholder="비밀번호 (4자 이상)" maxlength="20">
-    <div class="mu" id="item-desc" style="display:none">💣 폭탄 · 🧱 봉쇄 · ⚡ 연속착수 — 3수마다 아이템 획득!</div>
+    <div class="mu" id="item-desc" style="display:none">💣 🧱 ⚡ 🔄 ☄️ 🛡️ ⏪ 🔮 🎲 🦝 — 10가지 아이템! 돌 3개마다 획득</div>
     <button id="create" class="btn gold">방 만들기 (흑돌)</button>
   </div>
 
@@ -220,14 +228,23 @@ let hbTimer = null, pollTimer = null, joining = false;
 
 // ===== 아이템전 =====
 const ITEMS = {
-  bomb:  { i:'💣', n:'폭탄',  d:'제거할 상대 돌을 터치하세요' },
-  block: { i:'🧱', n:'봉쇄',  d:'막을 빈 칸을 터치하세요' },
-  double:{ i:'⚡', n:'연속',  d:'' }
+  bomb:   { i:'💣', n:'폭탄',    t:1, d:'상대 돌 1개를 골라 터뜨려요' },
+  block:  { i:'🧱', n:'봉쇄',    t:1, d:'빈 칸 1곳을 영구히 막아요' },
+  convert:{ i:'🔄', n:'개종',    t:1, d:'상대 돌 1개를 내 돌로 바꿔요' },
+  meteor: { i:'☄️', n:'운석',    t:1, d:'터치한 곳 3×3 안의 상대 돌을 모두 파괴해요' },
+  double: { i:'⚡', n:'연속',    d:'이번 턴에 돌을 두 번 놓아요' },
+  shield: { i:'🛡️', n:'방어막',  d:'상대의 다음 공격 아이템 1번을 막아요' },
+  rewind: { i:'⏪', n:'되감기',  d:'상대의 마지막 수를 취소해요' },
+  oracle: { i:'🔮', n:'예언',    d:'나에게 가장 좋은 한 수를 알려줘요 (나만 보여요)' },
+  dice:   { i:'🎲', n:'랜덤박스', d:'랜덤 아이템을 최대 2개 받아요' },
+  thief:  { i:'🦝', n:'도둑',    d:'상대 아이템 1개를 훔쳐요' }
 };
-const rnd = () => Object.keys(ITEMS)[Math.floor(Math.random() * 3)];
-const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
+const BLOCKABLE = ['bomb', 'convert', 'meteor', 'rewind', 'thief'];
+const rnd = ex => { const k = Object.keys(ITEMS).filter(x => x !== ex); return k[Math.floor(Math.random() * k.length)]; };
+const newState = () => ({ inv:{ black:[rnd()], white:[rnd()] }, dbl:{ black:0, white:0 }, sd:{ black:0, white:0 }, n:{ black:0, white:0 }, u:0, v:0, b:0, msg:'' });
 let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0;
-const sleep = ms => new Promise(r => setTimeout(r, ms));   // rs: 아이템 상태, pending: 선택한 아이템
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let lastPos = { black:null, white:null };   // rs: 아이템 상태, pending: 선택한 아이템
 const oppOf = c => c === 'black' ? 'white' : 'black';
 
 const TIERS = [[1000,'👑 오목의 신'],[800,'🔮 마스터'],[650,'🟢 에메랄드'],[500,'💎 다이아몬드'],[350,'⚡ 플래티넘'],[250,'🥇 골드'],[150,'🥈 실버'],[0,'🥉 브론즈']];
@@ -504,8 +521,8 @@ function subscribe() {
         const o = rs; rs = u.state;
         if (o && o.v !== rs.v && rs.msg) toast(rs.msg);
         const fx = o && rs.fx && (!o.fx || o.fx.k !== rs.fx.k) ? rs.fx : null;
-        if (fx) playFx(fx.t, fx.r, fx.c);
-        if (o && o.b !== rs.b) setTimeout(syncBoard, fx && fx.t === 'bomb' ? 500 : 0);
+        if (fx) playFx(fx.t, fx.r, fx.c, oppOf(myColor));
+        if (o && o.b !== rs.b) setTimeout(syncBoard, !fx ? 0 : fx.t === 'meteor' ? 950 : 520);
       }
       if (!u.winner) {
         if (prevWinner) { prevWinner = null; $('result').classList.add('hidden'); wantRematch = false; syncBoard(); }
@@ -577,35 +594,50 @@ function renderItems() {
     bar.appendChild(b);
   }
   prevInv = inv.length;
-  hint.textContent = rs.dbl[myColor] ? '⚡ 연속 착수 중! 돌을 두 번 놓을 수 있어요' : pending ? ITEMS[pending].d : '돌 3개를 놓을 때마다 아이템을 얻어요 (최대 3개, 턴당 1회 사용)';
+  const sh = rs.sd && rs.sd[myColor] ? '🛡️ 방어막 활성 · ' : '';
+  hint.textContent = rs.dbl[myColor] ? '⚡ 연속 착수 중! 돌을 두 번 놓을 수 있어요'
+    : pending ? `${ITEMS[pending].i} ${ITEMS[pending].d}${ITEMS[pending].t ? ' — 판을 터치하세요' : ' — 한 번 더 누르면 사용'}`
+    : sh + '돌 3개마다 아이템 획득 · 눌러서 설명 보기';
 }
 
-function playFx(t, r, c) {
-  const layer = $('fx'), wrap = layer.parentNode, lr = layer.getBoundingClientRect();
-  const cell = $('board').querySelector(`[data-row='${r}'][data-col='${c}']`);
-  const add = (cls, x, y, txt) => { const e = h('div', 'fx ' + cls, txt); e.style.left = x + 'px'; e.style.top = y + 'px'; layer.appendChild(e); setTimeout(() => e.remove(), 900); return e; };
+function playFx(t, r, c, by) {
+  by = by || myColor;
+  const layer = $('fx'), wrap = layer.parentNode, lr = layer.getBoundingClientRect(), B = $('board');
+  const cellAt = (a, b) => B.querySelector(`[data-row='${a}'][data-col='${b}']`);
+  const add = (cls, x, y, txt, ttl) => { const e = h('div', 'fx ' + cls, txt); e.style.left = x + 'px'; e.style.top = y + 'px'; layer.appendChild(e); setTimeout(() => e.remove(), ttl || 900); return e; };
   const burst = (x, y, cols, n) => { for (let i = 0; i < n; i++) { const a = Math.PI * 2 * i / n + Math.random(), d = 35 + Math.random() * 45, e = add('pt', x, y); e.style.setProperty('--dx', Math.cos(a) * d + 'px'); e.style.setProperty('--dy', Math.sin(a) * d + 'px'); e.style.setProperty('--c', cols[i % cols.length]); } };
   const shake = () => { wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake'); };
-  let x = lr.width / 2, y = lr.height / 2;
-  if (cell) { const cr = cell.getBoundingClientRect(); x = cr.left - lr.left + cr.width / 2; y = cr.top - lr.top + cr.height / 2; }
-  if (t === 'bomb') {
-    const st = cell && cell.querySelector('.st'); if (st) st.classList.add('boom');
-    add('ring', x, y); add('em', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c'], 14); shake();
-  } else if (t === 'block') {
-    setTimeout(() => { add('ring dust', x, y); burst(x, y, ['#a88b5c', '#7a6a58'], 8); shake(); }, 300);
-  } else if (t === 'double') {
-    add('flash', 0, 0); add('em', lr.width / 2, lr.height / 2, '⚡'); burst(lr.width / 2, lr.height / 2, ['#ffd166', '#ffffff'], 16);
+  const mark = (a, b, cls) => { const cl = cellAt(a, b), st = cl && cl.querySelector('.st'); if (st) st.classList.add(cls); };
+  const cx = lr.width / 2, cy = lr.height / 2;
+  let x = cx, y = cy;
+  if (r != null) { const cl = cellAt(r, c); if (cl) { const cr = cl.getBoundingClientRect(); x = cr.left - lr.left + cr.width / 2; y = cr.top - lr.top + cr.height / 2; } }
+  if (t === 'bomb') { mark(r, c, 'boom'); add('ring', x, y); add('em', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c'], 14); shake(); }
+  else if (t === 'rewind') { mark(r, c, 'boom'); add('ring', x, y); add('em', x, y, '⏪'); burst(x, y, ['#7fb2ff', '#ffffff'], 12); }
+  else if (t === 'convert') { mark(r, c, 'flip'); add('em', x, y, '🔄'); burst(x, y, ['#b28dff', '#ffffff'], 12); }
+  else if (t === 'meteor') {
+    add('met', x, y, '☄️', 500);
+    setTimeout(() => {
+      for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) { const cl = cellAt(a, b), st = cl && cl.querySelector('.st.' + oppOf(by)); if (st) st.classList.add('boom'); }
+      add('ring', x, y); add('em big', x, y, '💥'); burst(x, y, ['#ff5d73', '#ffd166', '#ff9f1c', '#ffffff'], 24); shake();
+    }, 450);
   }
+  else if (t === 'block') setTimeout(() => { add('ring dust', x, y); burst(x, y, ['#a88b5c', '#7a6a58'], 8); shake(); }, 300);
+  else if (t === 'double') { add('flash', 0, 0); add('em', cx, cy, '⚡'); burst(cx, cy, ['#ffd166', '#ffffff'], 16); }
+  else if (t === 'shield') { add('flash blue', 0, 0); add('em', cx, cy, '🛡️'); burst(cx, cy, ['#7fb2ff', '#ffffff'], 14); }
+  else if (t === 'dice') { add('em', cx, cy, '🎲'); burst(cx, cy, ['#ffd166', '#19c39a', '#ff5d73'], 14); }
+  else if (t === 'thief') { add('em', cx, cy, '🦝'); burst(cx, cy, ['#aaaaaa', '#555555'], 10); }
+  else if (t === 'oracle') add('orc', x, y, '', 4000);
 }
 
 function setPending(t) {
   pending = t;
-  $('board').className = t === 'bomb' ? 'tg-' + oppOf(myColor) : '';
+  $('board').className = (t === 'bomb' || t === 'convert') ? 'tg-' + oppOf(myColor) : '';
   renderItems();
 }
 
 async function commitItem(item, extra) {
   const s = structuredClone(rs);
+  s.sd = s.sd || { black:0, white:0 }; s.fx = null;
   s.inv[myColor].splice(s.inv[myColor].indexOf(item), 1);
   s.u = 1; s.v++; s.msg = `${myNickname}: ${ITEMS[item].i} ${ITEMS[item].n} 사용!`;
   if (extra) extra(s);
@@ -617,32 +649,111 @@ async function commitItem(item, extra) {
   setPending(null); updateCards();
 }
 
+// 방어막이 공격을 막으면 true
+function blocked(t) {
+  const opp = oppOf(myColor);
+  if (!BLOCKABLE.includes(t) || !(rs.sd && rs.sd[opp])) return false;
+  playFx('shield'); setPending(null);
+  commitItem(t, s => { s.sd[opp] = 0; s.msg = `🛡️ 방어막이 ${ITEMS[t].n}을(를) 막았다!`; s.fx = { k:Date.now(), t:'shield' }; });
+  return true;
+}
+
+function bestCell(col) {
+  let b = [7, 7], bs = -1;
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === null && near(r, c, 2)) {
+    const v = evalCell(r, c, col) * 1.1 + evalCell(r, c, oppOf(col)) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.1;
+    if (v > bs) { bs = v; b = [r, c]; }
+  }
+  return b;
+}
+
 async function pickItem(t) {
   if (roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
   if (rs.u) return toast('이번 턴에는 이미 아이템을 썼어요.');
-  if (t === 'double') { playFx('double'); return commitItem('double', s => { s.dbl[myColor] = 1; s.fx = { k:Date.now(), t:'double' }; }); }
-  setPending(pending === t ? null : t);
-  if (pending) toast(ITEMS[t].d);
+  if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
+  if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
+  useInstant(t);                                    // 즉시형: 한 번 더 누르면 사용
+}
+
+async function useInstant(t) {
+  const me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
+  if (t === 'thief' && !rs.inv[opp].length) return toast('훔칠 아이템이 없어요!');
+  let pos = null;
+  if (t === 'rewind') {
+    if (ai) pos = lastPos[opp] && boardState[lastPos[opp][0]][lastPos[opp][1]] === opp ? lastPos[opp] : null;
+    else {
+      const { data } = await sb.from('moves').select('row,col').eq('room_id', roomId).eq('color', opp).order('created_at', { ascending:false }).limit(1);
+      pos = data && data[0] ? [data[0].row, data[0].col] : null;
+    }
+    if (!pos) return toast('되감을 상대 돌이 없어요!');
+  }
+  if (blocked(t)) return;
+  setPending(null);
+  if (t === 'rewind') {
+    fxBusy = true; setTimeout(() => fxBusy = false, 800);
+    playFx('rewind', pos[0], pos[1]); await sleep(480);
+    if (!ai) {
+      const { error } = await sb.from('moves').delete().eq('room_id', roomId).eq('row', pos[0]).eq('col', pos[1]);
+      if (error) { syncBoard(); return toast('실패: ' + error.message); }
+    }
+    boardState[pos[0]][pos[1]] = null;
+    if (ai) { lastPos[opp] = null; redrawLocal(); } else syncBoard();
+    return commitItem(t, s => { s.b++; s.fx = { k, t, r:pos[0], c:pos[1] }; });
+  }
+  if (t === 'oracle') { const [r, c] = bestCell(me); playFx('oracle', r, c); return commitItem(t); }
+  playFx(t);
+  commitItem(t, s => {
+    s.fx = { k, t };
+    if (t === 'double') s.dbl[me] = 1;
+    if (t === 'shield') s.sd[me] = 1;
+    if (t === 'dice') for (let i = 0; i < 2; i++) if (s.inv[me].length < 3) s.inv[me].push(rnd('dice'));
+    if (t === 'thief') {
+      const oi = s.inv[opp], it = oi.splice(Math.floor(Math.random() * oi.length), 1)[0];
+      if (s.inv[me].length < 3) s.inv[me].push(it);
+      s.msg = `🦝 ${myNickname}님이 아이템을 훔쳤다!`;
+    }
+  });
 }
 
 async function useCellItem(r, c) {
-  const t = pending;
-  if (t === 'bomb') {
-    if (boardState[r][c] !== oppOf(myColor)) return toast('상대 돌을 선택하세요!');
-    fxBusy = true; setTimeout(() => fxBusy = false, 700);
-    setPending(null); playFx('bomb', r, c); await sleep(480);
-    if (gameMode === 'ai') { boardState[r][c] = null; redrawLocal(); return commitItem('bomb'); }
-    const { error } = await sb.from('moves').delete().eq('room_id', roomId).eq('row', r).eq('col', c);
-    if (error) return toast('실패: ' + error.message);
-    boardState[r][c] = null; syncBoard();
-    commitItem('bomb', s => { s.b++; s.fx = { k:Date.now(), t:'bomb', r, c }; });
-  } else if (t === 'block') {
+  const t = pending, me = myColor, opp = oppOf(me), ai = gameMode === 'ai', k = Date.now();
+  if (t === 'block') {
     if (boardState[r][c] !== null) return toast('빈 칸을 선택하세요!');
-    if (gameMode === 'ai') { boardState[r][c] = 'block'; renderStone(r, c, 'block'); playFx('block', r, c); return commitItem('block'); }
-    const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:'block' }]);
-    if (error) return toast('실패: ' + error.message);
-    playFx('block', r, c); commitItem('block', s => { s.fx = { k:Date.now(), t:'block', r, c }; });
+    if (ai) { boardState[r][c] = 'block'; renderStone(r, c, 'block'); }
+    else {
+      const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:'block' }]);
+      if (error) return toast('실패: ' + error.message);
+    }
+    playFx('block', r, c);
+    return commitItem('block', s => { s.fx = { k, t, r, c }; });
   }
+  let cells = [];
+  if (t === 'meteor') {
+    for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) if (inB(a, b) && boardState[a][b] === opp) cells.push([a, b]);
+    if (!cells.length) return toast('범위 안에 상대 돌이 없어요!');
+  } else {
+    if (boardState[r][c] !== opp) return toast('상대 돌을 선택하세요!');
+    cells = [[r, c]];
+  }
+  if (blocked(t)) return;
+  fxBusy = true; setTimeout(() => fxBusy = false, 1200);
+  setPending(null); playFx(t, r, c); await sleep(t === 'meteor' ? 900 : 480);
+  if (!ai) {
+    const res = await Promise.all(cells.map(([a, b]) => {
+      const q = sb.from('moves'), f = t === 'convert' ? q.update({ color:me }) : q.delete();
+      return f.eq('room_id', roomId).eq('row', a).eq('col', b);
+    }));
+    const bad = res.find(x => x.error);
+    if (bad) { syncBoard(); return toast('실패: ' + bad.error.message); }
+  }
+  cells.forEach(([a, b]) => boardState[a][b] = t === 'convert' ? me : null);
+  if (t === 'convert') {
+    const [a, b] = cells[0];
+    if (ai) { if (isFive(a, b, me)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(me, true), 400); } }
+    else checkWin(a, b, me);
+  }
+  if (ai) redrawLocal(); else syncBoard();
+  commitItem(t, s => { s.b++; s.fx = { k, t, r, c }; });
 }
 
 // ===== 착수 / 승리 =====
@@ -651,7 +762,7 @@ async function handleCell(r, c) {
   if (gameMode === 'ai') {
     if (aiOver || aiThinking) return;
     if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
-    if (pending) return useCellItem(r, c);
+    if (pending && ITEMS[pending].t) return useCellItem(r, c);
     if (boardState[r][c] !== null) return;
     const dbl = rs && rs.dbl[myColor];
     if (rs) {
@@ -667,7 +778,7 @@ async function handleCell(r, c) {
   if (!roomId) return;
   if (!oppName || roomStatus !== 'playing') return toast('아직 상대방이 입장하지 않았습니다!');
   if (currentTurn !== myColor) return toast('지금은 내 차례가 아닙니다!');
-  if (pending) return useCellItem(r, c);
+  if (pending && ITEMS[pending].t) return useCellItem(r, c);
   if (boardState[r][c] !== null) return;
 
   let next = oppOf(myColor), s = null;
@@ -734,7 +845,7 @@ $('ai-go').onclick = async () => {
 function startAi(color) {
   stopPolling(); gameMode = 'ai'; roomId = null; rs = aiItemMode ? newState() : null; pending = null;
   myColor = color; aiColor = oppOf(color); oppName = `AI (${AI_LBL[aiLevel]})`;
-  roomStatus = 'playing'; currentTurn = 'black'; aiOver = false; aiThinking = false; boardState = empty();
+  roomStatus = 'playing'; currentTurn = 'black'; aiOver = false; aiThinking = false; boardState = empty(); lastPos = { black:null, white:null };
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('room-info').textContent = `AI 대전 · ${AI_LBL[aiLevel]}${aiItemMode ? ' · ⚡아이템' : ''} · 승리 시 +${AI_WIN}🏆`;
   $('result').classList.add('hidden'); $('rm-msg').textContent = '';
@@ -743,7 +854,7 @@ function startAi(color) {
 }
 
 function placeAi(r, c, color) {
-  boardState[r][c] = color; renderStone(r, c, color); currentTurn = oppOf(color);
+  boardState[r][c] = color; renderStone(r, c, color); currentTurn = oppOf(color); lastPos[color] = [r, c];
   if (isFive(r, c, color)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(color, true), 400); return true; }
   if (boardState.every(row => row.every(x => x !== null))) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver('draw', true), 400); return true; }
   updateTurnUI(); return false;
@@ -764,30 +875,63 @@ function maxThreat(col) {
 // AI가 아이템을 쓸지 판단하고 사용한다. 연속착수를 썼으면 true
 async function aiUseItem() {
   if (!rs) return false;
-  const inv = rs.inv[aiColor];
+  const ai = aiColor, me = myColor, inv = rs.inv[ai];
   if (!inv.length || Math.random() < { easy:.5, normal:.2, hard:0 }[aiLevel]) return false;
-  const th = maxThreat(myColor), mine = maxThreat(aiColor).s;
+  const th = maxThreat(me), mine = maxThreat(ai).s, has = k => inv.includes(k), danger = th.s >= 1200;
+  const lp = lastPos[me], lpOk = lp && boardState[lp[0]][lp[1]] === me;
   if (mine >= 100000) return false;
   let use = null;
-  if (th.s >= 1200 && inv.includes('bomb')) use = 'bomb';
-  else if (th.s >= 1200 && inv.includes('block')) use = 'block';
-  else if (mine >= 1200 && inv.includes('double')) use = 'double';
+  if (danger && has('bomb')) use = 'bomb';
+  else if (danger && has('convert')) use = 'convert';
+  else if (danger && has('meteor')) use = 'meteor';
+  else if (th.s >= 10000 && has('rewind') && lpOk) use = 'rewind';
+  else if (danger && has('block')) use = 'block';
+  else if (has('shield') && !rs.sd[ai] && rs.inv[me].some(x => BLOCKABLE.includes(x))) use = 'shield';
+  else if (mine >= 1200 && has('double')) use = 'double';
+  else if (has('thief') && rs.inv[me].length) use = 'thief';
+  else if (has('dice') && inv.length <= 2) use = 'dice';
   if (!use) return false;
 
-  if (use === 'bomb') {
-    let pick = null, low = Infinity;
-    for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === myColor) {
-      boardState[r][c] = null; const t = maxThreat(myColor).s; boardState[r][c] = myColor;
-      if (t < low) { low = t; pick = [r, c]; }
-    }
-    if (!pick) return false;
-    playFx('bomb', pick[0], pick[1]); await sleep(480); boardState[pick[0]][pick[1]] = null; redrawLocal();
-  } else if (use === 'block') {
-    boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
-  }
   inv.splice(inv.indexOf(use), 1);
   toast(`🤖 AI: ${ITEMS[use].i} ${ITEMS[use].n} 사용!`);
-  if (use === 'double') { playFx('double'); await sleep(350); }
+  if (BLOCKABLE.includes(use) && rs.sd[me]) {
+    rs.sd[me] = 0; playFx('shield'); toast('🛡️ 방어막이 AI의 공격을 막았다!'); await sleep(600); updateCards(); renderItems(); return false;
+  }
+  if (use === 'bomb' || use === 'convert') {
+    let pick = null, low = Infinity;
+    for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === me) {
+      boardState[r][c] = null; const t = maxThreat(me).s; boardState[r][c] = me;
+      if (t < low) { low = t; pick = [r, c]; }
+    }
+    if (pick) {
+      playFx(use, pick[0], pick[1], ai); await sleep(480);
+      boardState[pick[0]][pick[1]] = use === 'convert' ? ai : null; redrawLocal();
+      if (use === 'convert' && isFive(pick[0], pick[1], ai)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(ai, true), 400); return 'end'; }
+    }
+  } else if (use === 'meteor') {
+    let pick = null, low = Infinity;
+    for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
+      const hit = [];
+      for (let a = r - 1; a <= r + 1; a++) for (let b = c - 1; b <= c + 1; b++) if (inB(a, b) && boardState[a][b] === me) hit.push([a, b]);
+      if (!hit.length) continue;
+      hit.forEach(([a, b]) => boardState[a][b] = null); const t = maxThreat(me).s; hit.forEach(([a, b]) => boardState[a][b] = me);
+      if (t < low) { low = t; pick = [r, c, hit]; }
+    }
+    if (pick) { playFx('meteor', pick[0], pick[1], ai); await sleep(900); pick[2].forEach(([a, b]) => boardState[a][b] = null); redrawLocal(); }
+  } else if (use === 'rewind') {
+    playFx('rewind', lp[0], lp[1], ai); await sleep(480); boardState[lp[0]][lp[1]] = null; lastPos[me] = null; redrawLocal();
+  } else if (use === 'block') {
+    boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
+  } else if (use === 'shield') { rs.sd[ai] = 1; playFx('shield'); await sleep(400); }
+  else if (use === 'double') { playFx('double'); await sleep(350); }
+  else if (use === 'thief') {
+    const oi = rs.inv[me], it = oi.splice(Math.floor(Math.random() * oi.length), 1)[0];
+    if (inv.length < 3) inv.push(it); playFx('thief'); await sleep(400);
+  } else if (use === 'dice') {
+    for (let i = 0; i < 2; i++) if (inv.length < 3) inv.push(rnd('dice'));
+    playFx('dice'); await sleep(400);
+  }
+  updateCards(); renderItems();
   return use === 'double';
 }
 
@@ -796,6 +940,7 @@ function aiMove() {
   setTimeout(async () => {
     if (aiOver) { aiThinking = false; return; }
     const dbl = await aiUseItem();
+    if (dbl === 'end') { aiThinking = false; return; }
     let ended = false;
     for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
     if (rs && !ended) {
