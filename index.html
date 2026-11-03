@@ -23,7 +23,7 @@
   (rooms / moves 테이블의 Realtime 이 켜져 있어야 합니다.)
   [Render] GitHub 업로드 후 New > Static Site (Build Command 비움, Publish Directory: .)
 
-  [관리자 모드] 로비의 ⚫ 아바타(게임 중엔 내 돌 아이콘)를 빠르게 7번 연타 → 우측 하단 ⚙️
+  [관리자 모드] 로비의 ⚫ 돌(게임 중엔 내 돌 아이콘)을 위로 슬라이드 → 우측 하단 ⚙️
 -->
 <html lang="ko">
 <head>
@@ -318,6 +318,7 @@ button{touch-action:manipulation}
   <div id="items" class="items hidden"></div>
   <div id="hint" class="hidden"></div>
   <button id="endturn" class="btn ghost hidden" onclick="endTurn()">⏭️ 턴 넘기기</button>
+  <button id="cancel-pick" class="btn ghost hidden" onclick="setPending(null)">❌ 아이템 선택 취소 (돌 놓기)</button>
   <div id="emo-panel" class="hidden"></div>
   <div id="my-card" class="pc">
     <div id="my-si" class="si black"></div>
@@ -774,8 +775,13 @@ function subscribe() {
     }).subscribe();
 
   roomSub = sb.channel(`rooms-${roomId}`).on('postgres_changes',
-    { event:'UPDATE', schema:'public', table:'rooms', filter:`id=eq.${roomId}` }, p => {
-      const u = p.new; if (!u) return;
+    { event:'UPDATE', schema:'public', table:'rooms', filter:`id=eq.${roomId}` }, p => applyRoom(p.new)).subscribe();
+  startRoomPoll();
+}
+
+// 방 정보가 바뀌었을 때(실시간 알림 또는 폴링) 화면에 반영
+function applyRoom(u) {
+  if (!u) return;
       currentTurn = u.turn || 'black'; roomStatus = u.status || 'waiting';
       setPlayers(u);
 
@@ -797,8 +803,29 @@ function subscribe() {
       if (roomStatus === 'waiting' && myColor !== 'black' && !cols().some(c => nameOf(c) === myNickname)) {
         toast('방에서 연결이 끊겨 자리가 비워졌어요.'); setTimeout(() => location.reload(), 1200);
       }
-      updateCards(); updateTurnUI(); renderItems();
-    }).subscribe();
+  updateCards(); updateTurnUI(); renderItems();
+}
+
+// 실시간(Realtime) 알림이 늦거나 빠져도 판이 멈추지 않도록 2.5초마다 한 번 더 확인
+let roomPoll = null, pollBusy = false;
+function startRoomPoll() {
+  clearInterval(roomPoll);
+  roomPoll = setInterval(async () => {
+    if (gameMode !== 'online' || !roomId || document.hidden || pollBusy || placing || acting || fxBusy) return;
+    pollBusy = true;
+    try {
+      const { data:r } = await sb.from('rooms').select('*').eq('id', roomId).maybeSingle();
+      if (!r || placing || acting) return;
+      const sv = r.state ? r.state.v : null, lv = rs ? rs.v : null;
+      const names = (r.black_player || '') !== nameOf('black') || (r.white_player || '') !== nameOf('white') || (r.max_players === 3 && (r.third_player || '') !== nameOf('blue'));
+      if (r.turn !== currentTurn || r.status !== roomStatus || sv !== lv || names || (r.winner || null) !== (prevWinner || null)) applyRoom(r);
+      if (roomStatus === 'playing') {
+        const { count } = await sb.from('moves').select('*', { count:'exact', head:true }).eq('room_id', roomId);
+        let n = 0; boardState.forEach(row => row.forEach(v => { if (v && v !== 'hole') n++; }));
+        if (count != null && count !== n && !placing && !acting && !fxBusy) syncBoard();
+      }
+    } catch (e) { console.warn(e); } finally { pollBusy = false; }
+  }, 2500);
 }
 
 async function requestRematch() {
@@ -908,7 +935,7 @@ function updateTurnUI() {
 function renderItems() {
   drawMines();
   const bar = $('items'), hint = $('hint');
-  if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); return; }
+  if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); $('cancel-pick').classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
   const inv = rs.inv[myColor] || [];
   for (let k = 0; k < Math.max(3, inv.length); k++) {
@@ -918,6 +945,7 @@ function renderItems() {
     bar.appendChild(b);
   }
   prevInv = inv.length;
+  $('cancel-pick').classList.toggle('hidden', !pending);
   const sh = rs.sd && rs.sd[myColor] ? '🛡️ 방어막 활성 · ' : '';
   $('endturn').classList.toggle('hidden', !(rs.u && !rs.dbl[myColor] && currentTurn === myColor && roomStatus === 'playing'));
   hint.textContent = rs.u && !pending && !rs.dbl[myColor] && currentTurn === myColor ? '🛠️ 아이템 사용 중 — 더 쓰거나 「턴 넘기기」를 누르세요 (돌은 못 둬요)'
@@ -1450,6 +1478,9 @@ async function handleCell(r, c) {
     if (mvErr) {
       toast('착수 실패: ' + mvErr.message);
       await sb.from('rooms').update(prev ? { turn:me, state:prev } : { turn:me }).eq('id', roomId);
+      currentTurn = me; if (prev) rs = prev; updateTurnUI(); renderItems();
+    } else if (!boardState[r][c]) {                 // 내 돌은 바로 보여주고 승리 여부도 바로 확인
+      boardState[r][c] = me; renderStone(r, c, me); checkWin(r, c, me);
     }
   } finally { placing = false; }
 }
@@ -1702,7 +1733,7 @@ async function aiUseItem(used) {
 
 function aiMove() {
   aiThinking = true;
-  setTimeout(async () => {
+  setTimeout(async () => { try {
     if (aiOver) { aiThinking = false; return; }
     let dbl = false, used = false;
     for (let n = 0; n < 2 && !dbl; n++) {
@@ -1725,7 +1756,10 @@ function aiMove() {
       updateCards();
     }
     aiThinking = false;
-  }, 500);
+  } catch (e) {
+    console.warn(e); aiThinking = false;
+    if (!aiOver) { currentTurn = myColor; updateTurnUI(); renderItems(); updateCards(); }
+  } }, 500);
 }
 
 const inB = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
@@ -1765,70 +1799,12 @@ function pickAi() {
   return [p.r, p.c];
 }
 
-initAuth().then(startPolling);
-</script>
-<script>
-/* ============================================================
-   admin.js — 오목 아레나 관리자 모드
-   열기: 로비의 ⚫ 아바타(또는 게임 중 내 돌 아이콘)를 빠르게 7번 연타
-   ============================================================ */
-(() => {
-'use strict';
-
-const TAPS = 7;          // 연타 횟수
-const GAP = 1200;        // 연타 사이 최대 간격(ms)
-const PIN = '';          // 비워두면 PIN 없음. 값을 넣으면 처음 켤 때 입력해야 해요 (클라이언트 코드라 강한 보안은 아님)
-const KEY = 'omok_admin';
-
-// 메인 코드(index.html)에서 ADM.free / ADM.inf / ADM.tool 을 참조해요
-const A = window.ADM = { on:false, free:false, inf:false, tool:null, cell:adminCell };
-
-// ---------- 스타일 ----------
-const css = document.createElement('style');
-css.textContent = `
-#adm-fab{position:fixed;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:75;width:48px;height:48px;border-radius:50%;background:#7a2cff;color:#fff;font-size:22px;box-shadow:0 4px 14px #000a}
-#adm-fab.tool{background:#ff5d73}
-#adm{justify-content:flex-start;overflow-y:auto;z-index:85}
-#adm .card{width:100%;max-width:380px;display:flex;flex-direction:column;gap:10px;margin:auto}
-#adm .sec{font-weight:700;color:var(--gold);font-size:14px;margin-top:4px}
-#adm .btn{padding:10px;font-size:13px}
-#adm .tg{font-size:12px}
-`;
-document.head.appendChild(css);
-
-// ---------- 공통 도우미 ----------
-const inGame = () => !$('game').classList.contains('hidden');
-const needGame = () => inGame() || (toast('게임 중에만 쓸 수 있어요'), false);
-const lab = c => `${EMO_CLR[c] || c} ${nameOf(c) || ''}`.trim();
-
-// 아이템 상태(rs)를 수정해서 서버/로컬에 반영
-async function mutate(fn) {
-  if (!needGame()) return false;
-  if (!rs) { toast('아이템전에서만 가능해요'); return false; }
-  const s = structuredClone(rs); norm(s); fn(s);
-  s.v = (s.v || 0) + 1; s.fx = null; s.msg = '';
-  if (gameMode === 'online') {
-    const { data, error } = await sb.from('rooms').update({ state:s }).eq('id', roomId).select('id');
-    if (error || !data || !data.length) { toast('실패: ' + (error ? error.message : '방을 찾을 수 없어요')); return false; }
-  }
-  rs = s; updateCards(); updateTurnUI(); renderItems();
-  return true;
-}
-
-// ---------- 트로피 ----------
-async function setTrophy(x) {
-  const n = Math.round(Number(x));
-  if (x === '' || !Number.isFinite(n)) return toast('숫자를 입력하세요');
-  myTrophy = Math.max(0, n);
-  await saveTrophy(); updateLobby(); updateCards();
-  inTro.value = myTrophy; toast(`🏆 트로피 → ${myTrophy}`);
-}
-
-// ---------- 게임 조작 ----------
-async function setTurn() {
-  if (!needGame()) return;
-  const c = selT.value;
-  if (gameMode === 'ai') {
-    currentTurn = c; if (rs) rs.u = 0;
-    updateTurnUI(); renderItems();
-    if (c === aiColor && !aiThinking && 
+// 네트워크가 멈추는 등으로 입력 잠금(acting/placing/fxBusy)이나 AI 차례가 12초 넘게 풀리지 않으면 자동 해제
+let lockSince = 0, aiSince = 0;
+setInterval(() => {
+  const waiting = !$('pick').classList.contains('hidden') || !$('pw').classList.contains('hidden');
+  const locked = (acting || placing || fxBusy) && !waiting;
+  if (!locked) lockSince = 0; else if (!lockSince) lockSince = Date.now();
+  else if (Date.now() - lockSince > 12000) { acting = placing = fxBusy = false; lockSince = 0; pending = null; renderItems(); toast('입력 잠금을 풀었어요. 다시 눌러보세요'); }
+  if (!(gameMode === 'ai' && aiThinking && !aiOver)) aiSince = 0; else if (!aiSince) aiSince = Date.now();
+  else if (Date.now() - aiSince > 15000) { aiThinking = false
