@@ -22,12 +22,14 @@
 
   (rooms / moves 테이블의 Realtime 이 켜져 있어야 합니다.)
   [Render] GitHub 업로드 후 New > Static Site (Build Command 비움, Publish Directory: .)
+
+  [관리자 모드] 로비의 ⚫ 아바타(게임 중엔 내 돌 아이콘)를 빠르게 7번 연타 → 우측 하단 ⚙️
 -->
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>오목</title>
+<title>오목 아레나</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -197,7 +199,7 @@ button{touch-action:manipulation}
 </head>
 <body>
 <div class="app">
-<h1> 오목</h1>
+<h1>🎯 오목 아레나</h1>
 <div id="toast" class="hidden"></div>
 
 <!-- 결과 -->
@@ -883,7 +885,7 @@ function renderItems() {
   if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
   const inv = rs.inv[myColor] || [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < Math.max(3, inv.length); k++) {
     const it = ITEMS[inv[k]], b = h('button', 'slot' + (it ? '' : ' empty') + (it && pending === inv[k] ? ' on' : '') + (it && k >= prevInv ? ' pop' : ''));
     if (it) { b.appendChild(h('span', 'ico', it.i)); b.appendChild(h('span', '', it.n)); b.onclick = () => pickItem(inv[k]); }
     else b.appendChild(h('span', 'ico', '·'));
@@ -1009,8 +1011,8 @@ async function commitItem(item, extra) {
   const s = structuredClone(rs);
   norm(s); s.fx = null;
   const ix = s.inv[myColor].indexOf(item); if (ix < 0) return false;
-  s.inv[myColor].splice(ix, 1);
-  s.u = 1; s.v++; s.msg = `${myNickname}: ${ITEMS[item].i} ${ITEMS[item].n} 사용!`;
+  if (!ADM.inf) s.inv[myColor].splice(ix, 1);
+  s.u = ADM.free ? 0 : 1; s.v++; s.msg = `${myNickname}: ${ITEMS[item].i} ${ITEMS[item].n} 사용!`;
   if (extra) extra(s);
   if (s.fx && !s.fx.by) s.fx.by = myColor;     // 누가 쓴 효과인지 (상대 색 돌에만 연출을 주기 위해)
   const old = rs; rs = s;
@@ -1088,15 +1090,15 @@ function pickStones(col, n) {
 // 착수/아이템 처리 중이거나 연출 중이면 모든 입력을 막는다
 const uiLocked = () => acting || placing || fxBusy || (gameMode === 'ai' && (aiThinking || aiOver));
 // 연속(⚡)은 바로 다음 턴에 다시 쓸 수 없다
-const doubleLocked = () => !!(rs && ((rs.ld && rs.ld[myColor]) || rs.dbl[myColor] || (rs.du && rs.du[myColor])));
+const doubleLocked = () => !ADM.free && !!(rs && ((rs.ld && rs.ld[myColor]) || rs.dbl[myColor] || (rs.du && rs.du[myColor])));
 
 async function pickItem(t) {
   if (uiLocked()) return;
   if (!rs || roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
   if (!rs.inv[myColor].includes(t)) return;
-  if (rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
-  if (rs.dbl[myColor]) return toast('⚡ 연속 착수 중에는 아이템을 쓸 수 없어요!');
-  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (!ADM.free && rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
+  if (!ADM.free && rs.dbl[myColor]) return toast('⚡ 연속 착수 중에는 아이템을 쓸 수 없어요!');
+  if (!ADM.free && t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
   if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
   if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
@@ -1113,7 +1115,7 @@ async function runInstant(t) {
   const me = myColor, ai = gameMode === 'ai', k = Date.now(), fl = foes(me);
   if (!rs || !rs.inv[me].includes(t)) return;
   if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
-  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (!ADM.free && t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
   if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
 
   // ① 대상 플레이어가 필요한 아이템 (상대가 1명이면 자동, 2명이면 선택창)
@@ -1356,6 +1358,7 @@ async function runCellItem(r, c) {
 
 // ===== 착수 / 승리 =====
 async function handleCell(r, c) {
+  if (ADM.tool && ADM.on) return ADM.cell(r, c);
   if (fxBusy || acting) return;
   if (gameMode === 'ai') {
     if (aiOver || aiThinking) return;
@@ -1705,5 +1708,165 @@ function pickAi() {
 
 initAuth().then(startPolling);
 </script>
-</body>
-</html>
+<script>
+/* ============================================================
+   admin.js — 오목 아레나 관리자 모드
+   열기: 로비의 ⚫ 아바타(또는 게임 중 내 돌 아이콘)를 빠르게 7번 연타
+   ============================================================ */
+(() => {
+'use strict';
+
+const TAPS = 7;          // 연타 횟수
+const GAP = 700;         // 연타 사이 최대 간격(ms)
+const PIN = '';          // 비워두면 PIN 없음. 값을 넣으면 처음 켤 때 입력해야 해요 (클라이언트 코드라 강한 보안은 아님)
+const KEY = 'omok_admin';
+
+// 메인 코드(index.html)에서 ADM.free / ADM.inf / ADM.tool 을 참조해요
+const A = window.ADM = { on:false, free:false, inf:false, tool:null, cell:adminCell };
+
+// ---------- 스타일 ----------
+const css = document.createElement('style');
+css.textContent = `
+#adm-fab{position:fixed;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:75;width:48px;height:48px;border-radius:50%;background:#7a2cff;color:#fff;font-size:22px;box-shadow:0 4px 14px #000a}
+#adm-fab.tool{background:#ff5d73}
+#adm{justify-content:flex-start;overflow-y:auto;z-index:85}
+#adm .card{width:100%;max-width:380px;display:flex;flex-direction:column;gap:10px;margin:auto}
+#adm .sec{font-weight:700;color:var(--gold);font-size:14px;margin-top:4px}
+#adm .btn{padding:10px;font-size:13px}
+#adm .tg{font-size:12px}
+`;
+document.head.appendChild(css);
+
+// ---------- 공통 도우미 ----------
+const inGame = () => !$('game').classList.contains('hidden');
+const needGame = () => inGame() || (toast('게임 중에만 쓸 수 있어요'), false);
+const lab = c => `${EMO_CLR[c] || c} ${nameOf(c) || ''}`.trim();
+
+// 아이템 상태(rs)를 수정해서 서버/로컬에 반영
+async function mutate(fn) {
+  if (!needGame()) return false;
+  if (!rs) { toast('아이템전에서만 가능해요'); return false; }
+  const s = structuredClone(rs); norm(s); fn(s);
+  s.v = (s.v || 0) + 1; s.fx = null; s.msg = '';
+  if (gameMode === 'online') {
+    const { data, error } = await sb.from('rooms').update({ state:s }).eq('id', roomId).select('id');
+    if (error || !data || !data.length) { toast('실패: ' + (error ? error.message : '방을 찾을 수 없어요')); return false; }
+  }
+  rs = s; updateCards(); updateTurnUI(); renderItems();
+  return true;
+}
+
+// ---------- 트로피 ----------
+async function setTrophy(x) {
+  const n = Math.round(Number(x));
+  if (x === '' || !Number.isFinite(n)) return toast('숫자를 입력하세요');
+  myTrophy = Math.max(0, n);
+  await saveTrophy(); updateLobby(); updateCards();
+  inTro.value = myTrophy; toast(`🏆 트로피 → ${myTrophy}`);
+}
+
+// ---------- 게임 조작 ----------
+async function setTurn() {
+  if (!needGame()) return;
+  const c = selT.value;
+  if (gameMode === 'ai') {
+    currentTurn = c; if (rs) rs.u = 0;
+    updateTurnUI(); renderItems();
+    if (c === aiColor && !aiThinking && !aiOver) aiMove();
+    return toast('턴 변경: ' + lab(c));
+  }
+  if (rs) await mutate(s => { s.u = 0; });
+  const { error } = await sb.from('rooms').update({ turn:c }).eq('id', roomId);
+  if (error) return toast('실패: ' + error.message);
+  currentTurn = c; updateTurnUI(); renderItems(); toast('턴 변경: ' + lab(c));
+}
+
+async function forceWin() {
+  if (!needGame()) return;
+  const c = selT.value;
+  if (gameMode === 'ai') { aiOver = true; updateTurnUI(); return handleGameOver(c, true); }
+  const { error } = await sb.from('rooms').update({ winner:c }).eq('id', roomId);
+  if (error) toast('실패: ' + error.message);
+}
+
+async function clearBoard(onlyBlocks) {
+  if (!needGame()) return;
+  if (gameMode === 'ai') {
+    boardState.forEach((row, a) => row.forEach((v, b) => { if (!onlyBlocks || v === 'block') boardState[a][b] = null; }));
+    if (!onlyBlocks && rs) rs.holes = [];
+    lastPos = { black:null, white:null, blue:null }; redrawLocal(); return toast('정리 완료');
+  }
+  let q = sb.from('moves').delete().eq('room_id', roomId);
+  if (onlyBlocks) q = q.eq('color', 'block');
+  const { error } = await q;
+  if (error) return toast('실패: ' + error.message);
+  if (rs) await mutate(s => { s.b = (s.b || 0) + 1; if (!onlyBlocks) s.holes = []; });
+  else toast('아이템전이 아니라 상대 화면은 새로고침해야 반영돼요', 4000);
+  await syncBoard(); toast('정리 완료');
+}
+
+async function resetItems() {
+  const ok = await mutate(s => {
+    const keepV = s.v, keepB = s.b || 0, n = newState(maxP);
+    Object.keys(n).forEach(k => s[k] = n[k]);
+    s.v = keepV; s.b = keepB + 1;
+  });
+  if (ok) { await syncBoard(); toast('아이템 상태 초기화'); }
+}
+
+const give = items => async () => {
+  const c = selT.value;
+  if (await mutate(s => { s.inv[c] = s.inv[c] || []; items().forEach(i => s.inv[c].push(i)); })) toast(`🎒 ${lab(c)} 에게 지급`);
+};
+
+function peekAll() {
+  if (!rs) return toast('아이템전에서만 가능해요');
+  toast('🔭 ' + cols().map(c => `${lab(c)}: ` + (((rs.inv && rs.inv[c]) || []).map(x => ITEMS[x].i).join('') || '없음')).join(' / '), 8000);
+}
+
+// ---------- 돌 편집 도구 ----------
+async function adminCell(r, c) {
+  const t = A.tool, cur = boardState[r][c];
+  if (cur === 'hole') return toast('구멍 칸은 편집할 수 없어요');
+  if (gameMode === 'ai') {
+    if (t === 'erase') { boardState[r][c] = null; return redrawLocal(); }
+    boardState[r][c] = t; renderStone(r, c, t);
+    if (t !== 'block' && !aiOver && isFive(r, c, t)) { aiOver = true; updateTurnUI(); setTimeout(() => handleGameOver(t, true), 400); }
+    return;
+  }
+  if (!roomId) return;
+  if (cur !== null) {
+    const { error } = await sb.from('moves').delete().eq('room_id', roomId).eq('row', r).eq('col', c);
+    if (error) return toast('실패: ' + error.message);
+    boardState[r][c] = null;
+  }
+  if (t !== 'erase') {
+    const { error } = await sb.from('moves').insert([{ room_id:roomId, row:r, col:c, color:t }]);
+    if (error) return toast('실패: ' + error.message);
+  }
+  if (cur !== null || t === 'erase') {      // 지워진 칸은 상대 화면에도 반영되도록 동기화 신호를 보낸다
+    if (rs) await mutate(s => { s.b = (s.b || 0) + 1; });
+    else toast('아이템전이 아니라 상대 화면은 새로고침해야 반영돼요', 3500);
+    await syncBoard();
+  }
+}
+
+// ---------- 패널 ----------
+let panel, selT, selI, selTool, inTro, fab;
+const sec = t => h('div', 'sec', t);
+const btn = (txt, fn, cls) => { const b = h('button', 'btn ' + (cls || 'ghost'), txt); b.onclick = fn; return b; };
+const grid = (...els) => { const g = h('div', 'tgs'); els.forEach(e => g.appendChild(e)); return g; };
+const toggle = (txt, key) => {
+  const l = h('label', 'tg'), i = document.createElement('input'); i.type = 'checkbox'; i.checked = !!A[key];
+  i.onchange = () => { A[key] = i.checked; renderItems(); toast(`${txt} ${i.checked ? 'ON' : 'OFF'}`, 1200); };
+  l.append(i, txt); l.dataset.key = key; return l;
+};
+const opt = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; };
+
+function build() {
+  fab = h('button', 'hidden', '⚙️'); fab.id = 'adm-fab'; fab.onclick = openPanel; document.body.appendChild(fab);
+
+  panel = h('div', 'ov hidden'); panel.id = 'adm';
+  const card = h('div', 'card'); panel.appendChild(card);
+
+  const top 
