@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <!--
   [Supabase 설정] 기존 SQL(profiles, rooms 컬럼, 정책)은 그대로 두고, 아래를 SQL Editor에서 추가 실행하세요.
@@ -34,8 +35,12 @@
 <title>오목 아레나</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- CDN 하나가 막혀도 되도록 대체 주소를 순서대로 시도합니다 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>window.supabase||document.write('<script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>')</script>
+<script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"><\/script>')</script>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script>window.confetti||(window.confetti=function(){})</script>
 <style>
 :root{--bg:#0d1024;--s1:#171b3a;--s2:#212756;--bd:#323a70;--gold:#f6b93b;--mint:#3ddbb0;--red:#ff5d73;--tx:#eef0ff;--mu:#8e94c8}
 *{box-sizing:border-box;margin:0}
@@ -361,7 +366,20 @@ button{touch-action:manipulation}
 </div>
 
 <script>
-const sb = supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB');
+// Supabase 라이브러리를 못 불러와도 화면/버튼/AI 대전은 죽지 않도록, 실패하면 "오프라인 클라이언트"로 대체
+let sbOffline = false;
+const offlineSb = (() => {
+  const err = { message:'서버에 연결할 수 없어요 (Supabase 라이브러리를 불러오지 못함)' }, res = () => Promise.resolve({ data:null, error:err });
+  const q = () => { const o = new Proxy(function () {}, { get:(_, k) => k === 'then' ? (f, r) => res().then(f, r) : () => o, apply:() => o }); return o; };
+  const ch = { on:() => ch, subscribe:() => ch, send:() => {}, track:() => {} };
+  return { from:q, auth:{ getSession:() => Promise.resolve({ data:{ session:null } }), signInAnonymously:res }, channel:() => ch, removeChannel:() => {} };
+})();
+const sb = (() => {
+  try { return supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB'); }
+  catch (e) { console.warn('Supabase 로드 실패', e); sbOffline = true; return offlineSb; }
+})();
+// 서버가 응답하지 않아도 버튼이 영원히 멈추지 않도록 시간 제한을 둔다
+const tmo = (p, ms = 8000) => Promise.race([Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error('서버 응답 시간 초과')), ms))]);
 const $ = id => document.getElementById(id);
 const h = (t,c,x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const empty = () => Array(15).fill(null).map(() => Array(15).fill(null));
@@ -524,11 +542,12 @@ $('o-three').onchange = e => $('three-desc').style.display = e.target.checked ? 
 
 // ===== 계정 =====
 async function initAuth() {
+  $('auth').textContent = '연결 중...'; $('auth').style.color = '';
   try {
-    let { data:{ session } } = await sb.auth.getSession();
-    if (!session) { const { data, error } = await sb.auth.signInAnonymously(); if (error) throw error; session = data.session; }
+    let { data:{ session } } = await tmo(sb.auth.getSession(), 10000);
+    if (!session) { const { data, error } = await tmo(sb.auth.signInAnonymously(), 10000); if (error) throw error; session = data.session; }
     myUserId = session.user.id;
-    const { data:p, error } = await sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle();
+    const { data:p, error } = await tmo(sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle(), 10000);
     if (error) throw error;
     if (p) {
       myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; localStorage.setItem('omok_trophy_cache', myTrophy);
@@ -549,10 +568,10 @@ async function ensureProfile(nick) {
   if (!myUserId) { myNickname = nick; return true; }
   try {
     if (!myProfile) {
-      const { data, error } = await sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
+      const { data, error } = await tmo(sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single());
       if (error) throw error; myProfile = data;
     } else if (myProfile.nickname !== nick) {
-      const { data, error } = await sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
+      const { data, error } = await tmo(sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single());
       if (error) throw error; myProfile = data;
     }
     myNickname = nick; myTrophy = myProfile.trophy; localStorage.setItem('omok_trophy_cache', myTrophy); updateLobby();
@@ -1769,37 +1788,4 @@ function aiMove() {
     for (let n = 0; n < 2 && !dbl; n++) {
       const res = await aiUseItem(used);
       if (res === 'end') { aiThinking = false; return; }
-      if (!res) break;
-      if (res === 'double') dbl = true; else used = true;
-    }
-    if (used && !dbl) {
-      if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
-      currentTurn = myColor; aiThinking = false; toast('🤖 AI가 턴을 넘겼어요');
-      updateTurnUI(); updateCards(); renderItems(); return;
-    }
-    let ended = false;
-    for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
-    if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
-    if (rs && !ended) {
-      rs.n[aiColor]++;
-      if (rs.n[aiColor] % 3 === 0 && rs.inv[aiColor].length < 3) rs.inv[aiColor].push(rnd());
-      updateCards();
-    }
-    aiThinking = false;
-  }, 500);
-}
-
-const inB = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
-function near(r, c, d) {
-  for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inB(r + i, c + j) && boardState[r + i][c + j] !== null) return true;
-  return false;
-}
-function lineScore(r, c, dr, dc, color) {
-  let n = 1, open = 0, a = r + dr, b = c + dc;
-  while (inB(a, b) && boardState[a][b] === color) { n++; a += dr; b += dc; }
-  if (inB(a, b) && boardState[a][b] === null) open++;
-  a = r - dr; b = c - dc;
-  while (inB(a, b) && boardState[a][b] === color) { n++; a -= dr; b -= dc; }
-  if (inB(a, b) && boardState[a][b] === null) open++;
-  if (n >= 5) return 100000;
-  if (n 
+      if (!re
