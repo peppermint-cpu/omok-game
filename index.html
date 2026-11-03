@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <!--
   [Supabase 설정] 기존 SQL(profiles, rooms 컬럼, 정책)은 그대로 두고, 아래를 SQL Editor에서 추가 실행하세요.
@@ -35,12 +34,8 @@
 <title>오목 아레나</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
-<!-- CDN 하나가 막혀도 되도록 대체 주소를 순서대로 시도합니다 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>window.supabase||document.write('<script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>')</script>
-<script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"><\/script>')</script>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-<script>window.confetti||(window.confetti=function(){})</script>
 <style>
 :root{--bg:#0d1024;--s1:#171b3a;--s2:#212756;--bd:#323a70;--gold:#f6b93b;--mint:#3ddbb0;--red:#ff5d73;--tx:#eef0ff;--mu:#8e94c8}
 *{box-sizing:border-box;margin:0}
@@ -154,14 +149,6 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 .ov .box{width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px}
 #r-title{font-family:'Black Han Sans',sans-serif;font-size:56px}
 .tro{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:12px 28px;text-align:center}
-/* ===== 관리자 모드 ===== */
-#admin-av{touch-action:none;user-select:none;-webkit-user-select:none}
-.av.adm{box-shadow:0 0 0 3px var(--gold),0 0 20px #f6b93bcc}
-#adm-lobby,#adm-box{border-color:var(--gold)}
-#adm-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-height:190px;overflow-y:auto}
-.aitem{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:5px 0;font-size:10px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:1px}
-.aitem .ico{font-size:20px}
-.aitem.on{border-color:var(--gold);background:#3a3410;color:var(--gold)}
 /* ===== 승급 / 강등 연출 ===== */
 #promo{z-index:80;background:#05071cee;cursor:pointer;overflow:hidden}
 .promo-card{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
@@ -280,23 +267,11 @@ button{touch-action:manipulation}
 <section id="lobby" class="col">
   <div class="card col">
     <div class="row">
-      <div class="av" id="admin-av">⚫</div>
+      <div class="av">⚫</div>
       <div class="grow"><div id="l-tier" class="tier"></div><div id="l-tro" class="mu"></div></div>
       <span id="auth" class="tiny">연결 중...</span>
     </div>
     <input id="nick" placeholder="닉네임 (2~10자, 중복 불가)" maxlength="10">
-  </div>
-
-  <div id="adm-lobby" class="card col hidden">
-    <div class="row"><span class="ttl grow" style="color:var(--gold)">🛠️ 관리자 모드</span><span class="tiny">⚫를 아래로 내리면 꺼져요</span></div>
-    <div class="row"><span class="tiny" style="width:70px">🏆 트로피</span><input id="adm-t" class="grow" type="number" inputmode="numeric" min="0" max="99999"></div>
-    <div class="row"><span class="tiny" style="width:70px">🔥 연승/연패</span><input id="adm-s" class="grow" type="number" inputmode="numeric" placeholder="연패는 음수 (예: -3)"></div>
-    <div class="tgs" style="grid-template-columns:repeat(4,1fr)">
-      <button class="btn ghost adm-q" data-d="-100">-100</button><button class="btn ghost adm-q" data-d="-10">-10</button>
-      <button class="btn ghost adm-q" data-d="10">+10</button><button class="btn ghost adm-q" data-d="100">+100</button>
-    </div>
-    <button id="adm-go" class="btn gold">적용 (서버에 저장)</button>
-    <div class="tiny">게임 중에는 화면에 전체 아이템 목록이 떠요. 내 차례에 눌러서 바로 사용할 수 있어요.</div>
   </div>
 
   <nav class="tabs">
@@ -350,10 +325,6 @@ button{touch-action:manipulation}
   <div class="wrap"><div id="board"></div><div id="fx"></div></div>
   <div id="items" class="items hidden"></div>
   <div id="hint" class="hidden"></div>
-  <div id="adm-box" class="card col hidden" style="padding:10px">
-    <div class="ttl" style="color:var(--gold);font-size:13px">🛠️ 관리자 · 모든 아이템 (눌러서 선택 → 한 번 더 눌러 사용)</div>
-    <div id="adm-grid"></div>
-  </div>
   <button id="endturn" class="btn ghost hidden" onclick="endTurn()">⏭️ 턴 넘기기</button>
   <div id="emo-panel" class="hidden"></div>
   <div id="my-card" class="pc">
@@ -366,20 +337,7 @@ button{touch-action:manipulation}
 </div>
 
 <script>
-// Supabase 라이브러리를 못 불러와도 화면/버튼/AI 대전은 죽지 않도록, 실패하면 "오프라인 클라이언트"로 대체
-let sbOffline = false;
-const offlineSb = (() => {
-  const err = { message:'서버에 연결할 수 없어요 (Supabase 라이브러리를 불러오지 못함)' }, res = () => Promise.resolve({ data:null, error:err });
-  const q = () => { const o = new Proxy(function () {}, { get:(_, k) => k === 'then' ? (f, r) => res().then(f, r) : () => o, apply:() => o }); return o; };
-  const ch = { on:() => ch, subscribe:() => ch, send:() => {}, track:() => {} };
-  return { from:q, auth:{ getSession:() => Promise.resolve({ data:{ session:null } }), signInAnonymously:res }, channel:() => ch, removeChannel:() => {} };
-})();
-const sb = (() => {
-  try { return supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB'); }
-  catch (e) { console.warn('Supabase 로드 실패', e); sbOffline = true; return offlineSb; }
-})();
-// 서버가 응답하지 않아도 버튼이 영원히 멈추지 않도록 시간 제한을 둔다
-const tmo = (p, ms = 8000) => Promise.race([Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error('서버 응답 시간 초과')), ms))]);
+const sb = supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB');
 const $ = id => document.getElementById(id);
 const h = (t,c,x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const empty = () => Array(15).fill(null).map(() => Array(15).fill(null));
@@ -395,8 +353,6 @@ const STREAK_WIN = { step:3, cap:15 };          // 연승: 2연승부터 (연승
 const STREAK_LOSE = { step:2, cap:10 };         // 연패: 2연패부터 (연패 수-1)×2 추가 감소, 최대 -10
 const ALIVE = 90000;
 let hbTimer = null, pollTimer = null, joining = false;
-let admin = false, adminTmp = null;                    // 관리자 모드 / 관리자가 임시로 꺼낸 아이템
-try { admin = sessionStorage.getItem('omok_admin') === '1'; } catch (e) {}
 
 // ===== 플레이어 / 색상 (2인: 흑·백, 3인: 흑·백·청) =====
 const ORDER = ['black', 'white', 'blue'];
@@ -496,12 +452,7 @@ const getTier = t => TIERS.find(x => t >= x[0])[1];
 const tierRank = t => TIERS.findIndex(x => t >= x[0]);          // 숫자가 작을수록 높은 티어
 const streakTxt = s => s >= 2 ? ` · 🔥 ${s}연승` : s <= -2 ? ` · 💧 ${-s}연패` : '';
 
-function updateLobby() {
-  $('l-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy);
-  const at = $('adm-t'), as = $('adm-s');
-  if (at && document.activeElement !== at) at.value = myTrophy;
-  if (as && document.activeElement !== as) as.value = myStreak;
-}
+function updateLobby() { $('l-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy); }
 updateLobby();
 
 let toastT;
@@ -542,12 +493,11 @@ $('o-three').onchange = e => $('three-desc').style.display = e.target.checked ? 
 
 // ===== 계정 =====
 async function initAuth() {
-  $('auth').textContent = '연결 중...'; $('auth').style.color = '';
   try {
-    let { data:{ session } } = await tmo(sb.auth.getSession(), 10000);
-    if (!session) { const { data, error } = await tmo(sb.auth.signInAnonymously(), 10000); if (error) throw error; session = data.session; }
+    let { data:{ session } } = await sb.auth.getSession();
+    if (!session) { const { data, error } = await sb.auth.signInAnonymously(); if (error) throw error; session = data.session; }
     myUserId = session.user.id;
-    const { data:p, error } = await tmo(sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle(), 10000);
+    const { data:p, error } = await sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle();
     if (error) throw error;
     if (p) {
       myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; localStorage.setItem('omok_trophy_cache', myTrophy);
@@ -568,10 +518,10 @@ async function ensureProfile(nick) {
   if (!myUserId) { myNickname = nick; return true; }
   try {
     if (!myProfile) {
-      const { data, error } = await tmo(sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single());
+      const { data, error } = await sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
       if (error) throw error; myProfile = data;
     } else if (myProfile.nickname !== nick) {
-      const { data, error } = await tmo(sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single());
+      const { data, error } = await sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
       if (error) throw error; myProfile = data;
     }
     myNickname = nick; myTrophy = myProfile.trophy; localStorage.setItem('omok_trophy_cache', myTrophy); updateLobby();
@@ -998,8 +948,6 @@ function updateTurnUI() {
 function renderItems() {
   drawMines();
   const bar = $('items'), hint = $('hint');
-  $('adm-box').classList.toggle('hidden', !(admin && rs));
-  if (admin && rs) $('adm-grid').querySelectorAll('.aitem').forEach(b => b.classList.toggle('on', b.dataset.k === pending));
   if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
   const inv = rs.inv[myColor] || [];
@@ -1118,7 +1066,6 @@ function playFx(t, r, c, by, list) {
 }
 
 function setPending(t) {
-  adminClean(t);
   pending = t;
   $('board').className = (t === 'bomb' || t === 'convert') ? foes(myColor).map(c => 'tg-' + c).join(' ') : '';
   renderItems();
@@ -1215,10 +1162,10 @@ async function pickItem(t) {
   if (uiLocked()) return;
   if (!rs || roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
   if (!rs.inv[myColor].includes(t)) return;
-  if (rs.fz && rs.fz[myColor] && !admin) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
+  if (rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
   if (rs.dbl[myColor]) return toast('⚡ 연속 착수 중에는 아이템을 쓸 수 없어요!');
-  if (t === 'double' && rs.u && !admin) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
-  if (t === 'double' && doubleLocked() && !admin) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
+  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
   if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
   useInstant(t);                                    // 즉시형: 한 번 더 누르면 사용
@@ -1233,9 +1180,9 @@ async function useInstant(t) {
 async function runInstant(t) {
   const me = myColor, ai = gameMode === 'ai', k = Date.now(), fl = foes(me);
   if (!rs || !rs.inv[me].includes(t)) return;
-  if (t === 'double' && doubleLocked() && !admin) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
-  if (t === 'double' && rs.u && !admin) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
-  if (t === 'reroll' && rs.inv[me].length < 2 && !admin) return toast('바꿀 다른 아이템이 없어요!');
+  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
+  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
 
   // ① 대상 플레이어가 필요한 아이템 (상대가 1명이면 자동, 2명이면 선택창)
   let tg = null;
@@ -1788,4 +1735,64 @@ function aiMove() {
     for (let n = 0; n < 2 && !dbl; n++) {
       const res = await aiUseItem(used);
       if (res === 'end') { aiThinking = false; return; }
-      if (!re
+      if (!res) break;
+      if (res === 'double') dbl = true; else used = true;
+    }
+    if (used && !dbl) {
+      if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
+      currentTurn = myColor; aiThinking = false; toast('🤖 AI가 턴을 넘겼어요');
+      updateTurnUI(); updateCards(); renderItems(); return;
+    }
+    let ended = false;
+    for (let i = 0; i < (dbl ? 2 : 1) && !ended; i++) { if (i) await sleep(400); const [r, c] = pickAi(); ended = placeAi(r, c, aiColor); }
+    if (rs) { rs.ld[aiColor] = rs.du[aiColor]; rs.du[aiColor] = 0; rs.fz[aiColor] = 0; }
+    if (rs && !ended) {
+      rs.n[aiColor]++;
+      if (rs.n[aiColor] % 3 === 0 && rs.inv[aiColor].length < 3) rs.inv[aiColor].push(rnd());
+      updateCards();
+    }
+    aiThinking = false;
+  }, 500);
+}
+
+const inB = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
+function near(r, c, d) {
+  for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inB(r + i, c + j) && boardState[r + i][c + j] !== null) return true;
+  return false;
+}
+function lineScore(r, c, dr, dc, color) {
+  let n = 1, open = 0, a = r + dr, b = c + dc;
+  while (inB(a, b) && boardState[a][b] === color) { n++; a += dr; b += dc; }
+  if (inB(a, b) && boardState[a][b] === null) open++;
+  a = r - dr; b = c - dc;
+  while (inB(a, b) && boardState[a][b] === color) { n++; a -= dr; b -= dc; }
+  if (inB(a, b) && boardState[a][b] === null) open++;
+  if (n >= 5) return 100000;
+  if (n === 4) return open === 2 ? 10000 : open === 1 ? 1500 : 0;
+  if (n === 3) return open === 2 ? 1200 : open === 1 ? 150 : 0;
+  if (n === 2) return open === 2 ? 120 : open === 1 ? 15 : 0;
+  return open === 2 ? 3 : open;
+}
+const evalCell = (r, c, col) => [[0,1],[1,0],[1,1],[1,-1]].reduce((t, [dr, dc]) => t + lineScore(r, c, dr, dc, col), 0);
+
+function pickAi() {
+  if (boardState.every(row => row.every(x => x === null))) return [7, 7];
+  const list = [];
+  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) {
+    if (boardState[r][c] !== null || !near(r, c, 2)) continue;
+    list.push({ r, c, s: evalCell(r, c, aiColor) * 1.1 + evalCell(r, c, myColor) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.1 });
+  }
+  if (!list.length) { for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (boardState[r][c] === null) return [r, c]; }
+  list.sort((a, b) => b.s - a.s);
+  let p = list[0];
+  if (list[0].s < 10000) {
+    if (aiLevel === 'easy' && Math.random() < 0.4) p = list[Math.floor(Math.random() * Math.min(6, list.length))];
+    else if (aiLevel === 'normal' && list.length > 1 && Math.random() < 0.2) p = list[1];
+  }
+  return [p.r, p.c];
+}
+
+initAuth().then(startPolling);
+</script>
+</body>
+</html>
