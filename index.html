@@ -447,12 +447,12 @@ let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0, 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let lastPos = { black:null, white:null, blue:null }, placing = false;   // rs: 아이템 상태, pending: 선택한 아이템
 
-const TIERS = [[1000,'👑 오목의 신'],[800,'🔮 마스터'],[650,'🟢 에메랄드'],[500,'💎 다이아몬드'],[350,'⚡ 플래티넘'],[250,'🥇 골드'],[150,'🥈 실버'],[0,'🥉 브론즈']];
+const TIERS = [[2900,'👑 그랜드 마스터'],[2000,'🔮 마스터'],[1500,'🟢 에메랄드'],[1100,'💎 다이아몬드'],[800,'⚡ 플래티넘'],[500,'🥇 골드'],[250,'🥈 실버'],[100,'🥉 브론즈'],[0,'🪵 아이언']];
 const getTier = t => TIERS.find(x => t >= x[0])[1];
 const tierRank = t => TIERS.findIndex(x => t >= x[0]);          // 숫자가 작을수록 높은 티어
 const streakTxt = s => s >= 2 ? ` · 🔥 ${s}연승` : s <= -2 ? ` · 💧 ${-s}연패` : '';
 
-function updateLobby() { $('l-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy); }
+function updateLobby() { $('l-tro').textContent = `🏆 ${myTrophy} 점수` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy); }
 updateLobby();
 
 let toastT;
@@ -504,7 +504,7 @@ async function initAuth() {
       if (p.streak != null) myStreak = p.streak; else streakCol = false;      // streak 컬럼이 없으면 이 기기에만 저장
       localStorage.setItem('omok_streak', myStreak);
     }
-    $('auth').textContent = '✅ 계정 연결됨'; $('auth').style.color = 'var(--mint)';
+    $('auth').textContent = '🟢 온라인'; $('auth').style.color = 'var(--mint)';
   } catch (e) {
     $('auth').textContent = '⚠️ 연결 실패'; $('auth').style.color = 'var(--red)';
     console.warn(e);
@@ -514,7 +514,7 @@ async function initAuth() {
 }
 
 async function ensureProfile(nick) {
-  if (nick.length < 2) { toast('닉네임은 2자 이상 입력해주세요!'); return false; }
+  if (nick.length < 2) { toast('닉네임은 2자 이상 입력해주세요'); return false; }
   if (!myUserId) { myNickname = nick; return true; }
   try {
     if (!myProfile) {
@@ -528,7 +528,7 @@ async function ensureProfile(nick) {
     return true;
   } catch (e) {
     if (e && e.code === '23505') { toast('이미 사용 중인 닉네임입니다.'); return false; }
-    toast('⚠️ 서버 저장 불가. 이번 판 트로피는 저장되지 않습니다.', 4000);
+    toast('⚠️ 서버 저장 불가. 이번 판 점수는 저장되지 않습니다.', 4000);
     myNickname = nick; return true;
   }
 }
@@ -544,7 +544,7 @@ async function saveTrophy() {
     streakCol = false; delete row.streak; console.warn('omok_profiles.streak 컬럼이 없어요. 파일 맨 위 SQL을 실행하세요.');
     ({ error } = await sb.from('omok_profiles').update(row).eq('user_id', myUserId));
   }
-  if (error) toast('트로피 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
+  if (error) toast('점수 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
 }
 
 // ===== 비밀번호 =====
@@ -745,12 +745,12 @@ function startSession(code, status) {
 function updateCards() {
   $('game').classList.toggle('three', maxP === 3 && gameMode === 'online');
   $('my-nm').textContent = myNickname;
-  $('my-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak);
+  $('my-tro').textContent = `🏆 ${myTrophy} 점` + streakTxt(myStreak);
   $('my-tier').textContent = getTier(myTrophy);
   $('my-si').className = 'si ' + (myColor || 'black');
   if (gameMode === 'ai') {
     $('opp2-card').classList.add('hidden');
-    $('opp-nm').textContent = `🤖 AI (${AI_LBL[aiLevel]})`; $('opp-tro').textContent = '승리 시 +10 🏆' + (rs ? ` · 🎒 아이템 ${rs.inv[aiColor].length}개` : ''); $('opp-tier').textContent = 'AI';
+    $('opp-nm').textContent = `🤖 AI (${AI_LBL[aiLevel]})`; $('opp-tro').textContent = '승리 시 +30 🏆' + (rs ? ` · 🎒 아이템 ${rs.inv[aiColor].length}개` : ''); $('opp-tier').textContent = 'AI';
     $('opp-si').className = 'si ' + aiColor; return;
   }
   const fl = foes(myColor || 'black');
@@ -760,7 +760,7 @@ function updateCards() {
     $(p + '-si').className = 'si ' + c;
     if (n) {
       $(p + '-nm').textContent = n; $(p + '-tier').textContent = getTier(pl[c].t);
-      $(p + '-tro').textContent = `🏆 ${pl[c].t} 트로피` + (rs ? ` · 🎒 아이템 ${((rs.inv && rs.inv[c]) || []).length}개` : '');
+      $(p + '-tro').textContent = `🏆 ${pl[c].t} 점` + (rs ? ` · 🎒 아이템 ${((rs.inv && rs.inv[c]) || []).length}개` : '');
     } else { $(p + '-nm').textContent = maxP === 3 ? '플레이어 입장 대기 중...' : '상대 입장 대기 중...'; $(p + '-tier').textContent = '대기'; $(p + '-tro').textContent = ''; }
   });
 }
@@ -899,7 +899,7 @@ async function requestRematch3() {
 }
 
 // ===== 이모티콘 =====
-const EMOS = ['😀','😂','😎','🥹','😭','😡','🤔','😱','👍','👏','🙏','🔥','😴','🤝','💪','🎉','😏','🫡'];
+const EMOS = ['😀','😂','😎','🥹','😭','😡','🤔','😱','👍','👏','🙏','🔥','🖕','🤝','💪','🎉','😏','🫡'];
 let emoSub = null, emoCool = 0;
 EMOS.forEach(e => { const b = h('button', '', e); b.onclick = () => sendEmo(e); $('emo-panel').appendChild(b); });
 $('emo-btn').onclick = () => $('emo-panel').classList.toggle('hidden');
