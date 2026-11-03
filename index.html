@@ -34,6 +34,31 @@
 <title>오목 아레나</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- 진단: 앱이 안 켜지면 이유를 화면 아래에 빨간 띠로 보여줍니다 (캡처해서 보내주세요) -->
+<script>
+window.__errs=[];
+function showDiag(){
+  var go=function(){
+    var d=document.getElementById('diag');
+    if(!d){d=document.createElement('div');d.id='diag';d.onclick=function(){d.style.display='none'};
+      d.style.cssText='position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#7a1020;color:#fff;border:2px solid #ff5d73;border-radius:12px;padding:10px 12px;font:12px/1.5 system-ui,sans-serif;white-space:pre-wrap;word-break:break-all';
+      document.body.appendChild(d);}
+    d.style.display='block';
+    d.textContent='⚠️ 오류 진단 (누르면 닫힘) · 빌드 v1103b\n'+window.__errs.join('\n');
+  };
+  if(document.body)go();else document.addEventListener('DOMContentLoaded',go);
+}
+window.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&(t.src||t.href)&&t!==window)window.__errs.push('불러오기 실패: '+(t.src||t.href));
+  else window.__errs.push((e.message||'오류')+(e.lineno?' (줄 '+e.lineno+')':''));
+  showDiag();
+},true);
+window.addEventListener('unhandledrejection',function(e){window.__errs.push('Promise 오류: '+((e.reason&&e.reason.message)||e.reason));showDiag();});
+window.addEventListener('load',function(){setTimeout(function(){
+  if(!window.__appStarted){window.__errs.push('앱 스크립트가 실행되지 않았어요.\n→ 올린 index.html이 중간에 잘렸거나, 옛 버전/캐시일 수 있어요.');showDiag();}
+},2500)});
+</script>
 <!-- CDN 하나가 막혀도 되도록 대체 주소를 순서대로 시도합니다 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>window.supabase||document.write('<script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>')</script>
@@ -230,6 +255,7 @@ button{touch-action:manipulation}
 <body>
 <div class="app">
 <h1>🎯 오목 아레나</h1>
+<div class="tiny" style="text-align:center;margin:-8px 0 10px">빌드 v1103b</div>
 <div id="toast" class="hidden"></div>
 
 <!-- 승급 / 강등 연출 -->
@@ -365,6 +391,7 @@ button{touch-action:manipulation}
 </div>
 
 <script>
+window.__appStarted = true;      // 진단용: 앱 스크립트가 시작됐다는 표시
 // Supabase 라이브러리를 못 불러와도 화면/버튼/AI 대전은 죽지 않도록, 실패하면 "오프라인 클라이언트"로 대체
 let sbOffline = false;
 const offlineSb = (() => {
@@ -375,7 +402,11 @@ const offlineSb = (() => {
 })();
 const sb = (() => {
   try { return supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB'); }
-  catch (e) { console.warn('Supabase 로드 실패', e); sbOffline = true; return offlineSb; }
+  catch (e) {
+    console.warn('Supabase 로드 실패', e); sbOffline = true;
+    window.__errs.push('Supabase 라이브러리를 불러오지 못했어요 (' + ((e && e.message) || e) + ')\n→ 인터넷/광고차단/카카오톡 등 앱 내 브라우저 문제일 수 있어요. 크롬·사파리로 열어보세요.'); showDiag();
+    return offlineSb;
+  }
 })();
 // 서버가 응답하지 않아도 버튼이 영원히 멈추지 않도록 시간 제한을 둔다
 // 저장소(localStorage)를 못 쓰는 환경(앱 내 미리보기, 시크릿 모드 등)에서도 죽지 않도록 안전하게 감싼다
@@ -564,6 +595,7 @@ async function initAuth() {
     $('auth').textContent = '⚠️ 연결 실패'; $('auth').style.color = 'var(--red)';
     console.warn(e);
     toast('계정 연결 실패: ' + ((e && e.message) || e), 8000);
+    if (!sbOffline) { window.__errs.push('계정 연결 실패: ' + ((e && e.message) || JSON.stringify(e)) + '\n→ Supabase 프로젝트 일시정지 / 익명 로그인 꺼짐 / omok_profiles 테이블·정책 확인'); showDiag(); }
   }
   updateLobby();
 }
@@ -1755,36 +1787,4 @@ async function aiUseItem(used) {
     const tmp = rs.inv[ai]; rs.inv[ai] = rs.inv[me]; rs.inv[me] = tmp; playFx('swap'); await sleep(400);
   } else if (use === 'storm') {
     const lst = pickStones(me, 3);
-    playFx('storm', null, null, ai, lst); await sleep(fxWait('storm'));
-    lst.forEach(([a, b]) => boardState[a][b] = null); redrawLocal();
-  } else if (use === 'rewind') {
-    playFx('rewind', lp[0], lp[1], ai); await sleep(480); boardState[lp[0]][lp[1]] = null; lastPos[me] = null; redrawLocal();
-  } else if (use === 'block') {
-    boardState[th.r][th.c] = 'block'; renderStone(th.r, th.c, 'block'); playFx('block', th.r, th.c);
-  } else if (use === 'shield') { rs.sd[ai] = 1; await sleep(300); }
-  else if (use === 'freeze') { rs.fz[me] = 1; playFx('freeze'); await sleep(400); }
-  else if (use === 'double') { rs.du[ai] = 1; playFx('double'); await sleep(350); }
-  else if (use === 'mine') { const [mr, mc] = bestCell(me); rs.mines[ai].push([mr, mc]); }
-  else if (use === 'detect') {
-    const n = rs.mines[me].length; rs.mines[me] = []; playFx('detect'); toast(`🔍 AI가 지뢰 ${n}개를 찾아 없앴다!`); await sleep(400);
-  }
-  else if (use === 'luck') { rs.n[ai] += (2 - rs.n[ai] % 3 + 3) % 3; playFx('luck'); await sleep(350); }
-  else if (use === 'reroll') { for (let i = 0; i < inv.length; i++) inv[i] = rnd('reroll'); playFx('reroll'); await sleep(350); }
-  else if (use === 'sweep') {
-    playFx('sweep'); await sleep(500);
-    for (let a = 0; a < 15; a++) for (let b = 0; b < 15; b++) if (boardState[a][b] === 'block') boardState[a][b] = null;
-    redrawLocal();
-  } else if (use === 'thief') {
-    const oi = rs.inv[me], it = oi.splice(Math.floor(Math.random() * oi.length), 1)[0];
-    if (inv.length < 3) inv.push(it); playFx('thief'); await sleep(400);
-  } else if (use === 'dice') {
-    for (let i = 0; i < 2; i++) if (inv.length < 3) inv.push(rnd('dice'));
-    playFx('dice'); await sleep(400);
-  }
-  updateCards(); renderItems();
-  return use === 'double' ? 'double' : 'used';
-}
-
-function aiMove() {
-  aiThinking = true;
-  setTimeout(async () =
+    playFx(
