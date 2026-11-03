@@ -347,7 +347,7 @@ let boardState = empty(), myTrophy = parseInt(localStorage.getItem('omok_trophy_
 let myStreak = parseInt(localStorage.getItem('omok_streak') || '0') || 0, streakCol = true;   // 연승(+)/연패(-) 기록
 let myUserId = null, myProfile = null, movesSub = null, roomSub = null, presSub = null, timerI = null, timeLeft = 30, wantRematch = false, prevWinner = null;
 let gameMode = 'online', aiColor = 'white', aiLevel = 'normal', aiThinking = false, aiOver = false;
-const AI_WIN = 10, AI_LBL = { easy:'쉬움', normal:'보통', hard:'어려움' };
+const AI_WIN = 400, AI_LBL = { easy:'쉬움', normal:'보통', hard:'어려움' };
 const WIN_2P = 30, WIN_3P = 40, LOSE = 20;      // 트로피 증감 (기본값)
 const STREAK_WIN = { step:3, cap:15 };          // 연승: 2연승부터 (연승 수-1)×3 보너스, 최대 +15
 const STREAK_LOSE = { step:2, cap:10 };         // 연패: 2연패부터 (연패 수-1)×2 추가 감소, 최대 -10
