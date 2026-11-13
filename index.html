@@ -34,8 +34,37 @@
 <title>오목 아레나</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- 진단: 앱이 안 켜지면 이유를 화면 아래에 빨간 띠로 보여줍니다 (캡처해서 보내주세요) -->
+<script>
+window.__errs=[];
+function showDiag(){
+  var go=function(){
+    var d=document.getElementById('diag');
+    if(!d){d=document.createElement('div');d.id='diag';d.onclick=function(){d.style.display='none'};
+      d.style.cssText='position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#7a1020;color:#fff;border:2px solid #ff5d73;border-radius:12px;padding:10px 12px;font:12px/1.5 system-ui,sans-serif;white-space:pre-wrap;word-break:break-all';
+      document.body.appendChild(d);}
+    d.style.display='block';
+    d.textContent='⚠️ 오류 진단 (누르면 닫힘) · 빌드 v1103b\n'+window.__errs.join('\n');
+  };
+  if(document.body)go();else document.addEventListener('DOMContentLoaded',go);
+}
+window.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&(t.src||t.href)&&t!==window)window.__errs.push('불러오기 실패: '+(t.src||t.href));
+  else window.__errs.push((e.message||'오류')+(e.lineno?' (줄 '+e.lineno+')':''));
+  showDiag();
+},true);
+window.addEventListener('unhandledrejection',function(e){window.__errs.push('Promise 오류: '+((e.reason&&e.reason.message)||e.reason));showDiag();});
+window.addEventListener('load',function(){setTimeout(function(){
+  if(!window.__appStarted){window.__errs.push('앱 스크립트가 실행되지 않았어요.\n→ 올린 index.html이 중간에 잘렸거나, 옛 버전/캐시일 수 있어요.');showDiag();}
+},2500)});
+</script>
+<!-- CDN 하나가 막혀도 되도록 대체 주소를 순서대로 시도합니다 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>window.supabase||document.write('<script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>')</script>
+<script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"><\/script>')</script>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script>window.confetti||(window.confetti=function(){})</script>
 <style>
 :root{--bg:#0d1024;--s1:#171b3a;--s2:#212756;--bd:#323a70;--gold:#f6b93b;--mint:#3ddbb0;--red:#ff5d73;--tx:#eef0ff;--mu:#8e94c8}
 *{box-sizing:border-box;margin:0}
@@ -149,6 +178,14 @@ h1{font-family:'Black Han Sans','Noto Sans KR',sans-serif;font-weight:400;font-s
 .ov .box{width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px}
 #r-title{font-family:'Black Han Sans',sans-serif;font-size:56px}
 .tro{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:12px 28px;text-align:center}
+/* ===== 관리자 모드 ===== */
+#admin-av{touch-action:none;user-select:none;-webkit-user-select:none}
+.av.adm{box-shadow:0 0 0 3px var(--gold),0 0 20px #f6b93bcc}
+#adm-lobby,#adm-box{border-color:var(--gold)}
+#adm-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-height:190px;overflow-y:auto}
+.aitem{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:5px 0;font-size:10px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:1px}
+.aitem .ico{font-size:20px}
+.aitem.on{border-color:var(--gold);background:#3a3410;color:var(--gold)}
 /* ===== 승급 / 강등 연출 ===== */
 #promo{z-index:80;background:#05071cee;cursor:pointer;overflow:hidden}
 .promo-card{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
@@ -218,6 +255,7 @@ button{touch-action:manipulation}
 <body>
 <div class="app">
 <h1>🎯 오목 아레나</h1>
+<div class="tiny" style="text-align:center;margin:-8px 0 10px">빌드 v1103b</div>
 <div id="toast" class="hidden"></div>
 
 <!-- 승급 / 강등 연출 -->
@@ -267,11 +305,23 @@ button{touch-action:manipulation}
 <section id="lobby" class="col">
   <div class="card col">
     <div class="row">
-      <div class="av">⚫</div>
+      <div class="av" id="admin-av">⚫</div>
       <div class="grow"><div id="l-tier" class="tier"></div><div id="l-tro" class="mu"></div></div>
       <span id="auth" class="tiny">연결 중...</span>
     </div>
     <input id="nick" placeholder="닉네임 (2~10자, 중복 불가)" maxlength="10">
+  </div>
+
+  <div id="adm-lobby" class="card col hidden">
+    <div class="row"><span class="ttl grow" style="color:var(--gold)">🛠️ 관리자 모드</span><span class="tiny">⚫를 아래로 내리면 꺼져요</span></div>
+    <div class="row"><span class="tiny" style="width:70px">🏆 트로피</span><input id="adm-t" class="grow" type="number" inputmode="numeric" min="0" max="99999"></div>
+    <div class="row"><span class="tiny" style="width:70px">🔥 연승/연패</span><input id="adm-s" class="grow" type="number" inputmode="numeric" placeholder="연패는 음수 (예: -3)"></div>
+    <div class="tgs" style="grid-template-columns:repeat(4,1fr)">
+      <button class="btn ghost adm-q" data-d="-100">-100</button><button class="btn ghost adm-q" data-d="-10">-10</button>
+      <button class="btn ghost adm-q" data-d="10">+10</button><button class="btn ghost adm-q" data-d="100">+100</button>
+    </div>
+    <button id="adm-go" class="btn gold">적용 (서버에 저장)</button>
+    <div class="tiny">게임 중에는 화면에 전체 아이템 목록이 떠요. 내 차례에 눌러서 바로 사용할 수 있어요.</div>
   </div>
 
   <nav class="tabs">
@@ -325,6 +375,10 @@ button{touch-action:manipulation}
   <div class="wrap"><div id="board"></div><div id="fx"></div></div>
   <div id="items" class="items hidden"></div>
   <div id="hint" class="hidden"></div>
+  <div id="adm-box" class="card col hidden" style="padding:10px">
+    <div class="ttl" style="color:var(--gold);font-size:13px">🛠️ 관리자 · 모든 아이템 (눌러서 선택 → 한 번 더 눌러 사용)</div>
+    <div id="adm-grid"></div>
+  </div>
   <button id="endturn" class="btn ghost hidden" onclick="endTurn()">⏭️ 턴 넘기기</button>
   <div id="emo-panel" class="hidden"></div>
   <div id="my-card" class="pc">
@@ -337,22 +391,48 @@ button{touch-action:manipulation}
 </div>
 
 <script>
-const sb = supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB');
+window.__appStarted = true;      // 진단용: 앱 스크립트가 시작됐다는 표시
+// Supabase 라이브러리를 못 불러와도 화면/버튼/AI 대전은 죽지 않도록, 실패하면 "오프라인 클라이언트"로 대체
+let sbOffline = false;
+const offlineSb = (() => {
+  const err = { message:'서버에 연결할 수 없어요 (Supabase 라이브러리를 불러오지 못함)' }, res = () => Promise.resolve({ data:null, error:err });
+  const q = () => { const o = new Proxy(function () {}, { get:(_, k) => k === 'then' ? (f, r) => res().then(f, r) : () => o, apply:() => o }); return o; };
+  const ch = { on:() => ch, subscribe:() => ch, send:() => {}, track:() => {} };
+  return { from:q, auth:{ getSession:() => Promise.resolve({ data:{ session:null } }), signInAnonymously:res }, channel:() => ch, removeChannel:() => {} };
+})();
+const sb = (() => {
+  try { return supabase.createClient('https://lunsgjjznfhfbtfcvoye.supabase.co','sb_publishable_n7M5OMb_BIFAeJ0jdL9KBw_foAfZxeB'); }
+  catch (e) {
+    console.warn('Supabase 로드 실패', e); sbOffline = true;
+    window.__errs.push('Supabase 라이브러리를 불러오지 못했어요 (' + ((e && e.message) || e) + ')\n→ 인터넷/광고차단/카카오톡 등 앱 내 브라우저 문제일 수 있어요. 크롬·사파리로 열어보세요.'); showDiag();
+    return offlineSb;
+  }
+})();
+// 서버가 응답하지 않아도 버튼이 영원히 멈추지 않도록 시간 제한을 둔다
+// 저장소(localStorage)를 못 쓰는 환경(앱 내 미리보기, 시크릿 모드 등)에서도 죽지 않도록 안전하게 감싼다
+const memStore = {};
+const store = {
+  get:k => { try { return localStorage.getItem(k); } catch (e) { return k in memStore ? memStore[k] : null; } },
+  set:(k, v) => { try { localStorage.setItem(k, v); } catch (e) { memStore[k] = String(v); } }
+};
+const tmo = (p, ms = 8000) => Promise.race([Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error('서버 응답 시간 초과')), ms))]);
 const $ = id => document.getElementById(id);
 const h = (t,c,x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const empty = () => Array(15).fill(null).map(() => Array(15).fill(null));
 
 let roomId = null, roomTitle = '', myColor = null, myNickname = '', currentTurn = 'black', roomStatus = 'waiting';
-let boardState = empty(), myTrophy = parseInt(localStorage.getItem('omok_trophy_cache') || '100');
-let myStreak = parseInt(localStorage.getItem('omok_streak') || '0') || 0, streakCol = true;   // 연승(+)/연패(-) 기록
+let boardState = empty(), myTrophy = parseInt(store.get('omok_trophy_cache') || '100');
+let myStreak = parseInt(store.get('omok_streak') || '0') || 0, streakCol = true;   // 연승(+)/연패(-) 기록
 let myUserId = null, myProfile = null, movesSub = null, roomSub = null, presSub = null, timerI = null, timeLeft = 30, wantRematch = false, prevWinner = null;
 let gameMode = 'online', aiColor = 'white', aiLevel = 'normal', aiThinking = false, aiOver = false;
-const AI_WIN = 400, AI_LBL = { easy:'쉬움', normal:'보통', hard:'어려움' };
+const AI_WIN = 10, AI_LBL = { easy:'쉬움', normal:'보통', hard:'어려움' };
 const WIN_2P = 30, WIN_3P = 40, LOSE = 20;      // 트로피 증감 (기본값)
 const STREAK_WIN = { step:3, cap:15 };          // 연승: 2연승부터 (연승 수-1)×3 보너스, 최대 +15
 const STREAK_LOSE = { step:2, cap:10 };         // 연패: 2연패부터 (연패 수-1)×2 추가 감소, 최대 -10
 const ALIVE = 90000;
 let hbTimer = null, pollTimer = null, joining = false;
+let admin = false, adminTmp = null;                    // 관리자 모드 / 관리자가 임시로 꺼낸 아이템
+try { admin = sessionStorage.getItem('omok_admin') === '1'; } catch (e) {}
 
 // ===== 플레이어 / 색상 (2인: 흑·백, 3인: 흑·백·청) =====
 const ORDER = ['black', 'white', 'blue'];
@@ -447,12 +527,17 @@ let rs = null, pending = null, aiItemMode = false, fxBusy = false, prevInv = 0, 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let lastPos = { black:null, white:null, blue:null }, placing = false;   // rs: 아이템 상태, pending: 선택한 아이템
 
-const TIERS = [[2900,'👑 그랜드 마스터'],[2000,'🔮 마스터'],[1500,'🟢 에메랄드'],[1100,'💎 다이아몬드'],[800,'⚡ 플래티넘'],[500,'🥇 골드'],[250,'🥈 실버'],[100,'🥉 브론즈'],[0,'🪵 아이언']];
+const TIERS = [[1000,'👑 오목의 신'],[800,'🔮 마스터'],[650,'🟢 에메랄드'],[500,'💎 다이아몬드'],[350,'⚡ 플래티넘'],[250,'🥇 골드'],[150,'🥈 실버'],[0,'🥉 브론즈']];
 const getTier = t => TIERS.find(x => t >= x[0])[1];
 const tierRank = t => TIERS.findIndex(x => t >= x[0]);          // 숫자가 작을수록 높은 티어
 const streakTxt = s => s >= 2 ? ` · 🔥 ${s}연승` : s <= -2 ? ` · 💧 ${-s}연패` : '';
 
-function updateLobby() { $('l-tro').textContent = `🏆 ${myTrophy} 점수` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy); }
+function updateLobby() {
+  $('l-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak); $('l-tier').textContent = getTier(myTrophy);
+  const at = $('adm-t'), as = $('adm-s');
+  if (at && document.activeElement !== at) at.value = myTrophy;
+  if (as && document.activeElement !== as) as.value = myStreak;
+}
 updateLobby();
 
 let toastT;
@@ -493,48 +578,50 @@ $('o-three').onchange = e => $('three-desc').style.display = e.target.checked ? 
 
 // ===== 계정 =====
 async function initAuth() {
+  $('auth').textContent = '연결 중...'; $('auth').style.color = '';
   try {
-    let { data:{ session } } = await sb.auth.getSession();
-    if (!session) { const { data, error } = await sb.auth.signInAnonymously(); if (error) throw error; session = data.session; }
+    let { data:{ session } } = await tmo(sb.auth.getSession(), 10000);
+    if (!session) { const { data, error } = await tmo(sb.auth.signInAnonymously(), 10000); if (error) throw error; session = data.session; }
     myUserId = session.user.id;
-    const { data:p, error } = await sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle();
+    const { data:p, error } = await tmo(sb.from('omok_profiles').select('*').eq('user_id', myUserId).maybeSingle(), 10000);
     if (error) throw error;
     if (p) {
-      myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; localStorage.setItem('omok_trophy_cache', myTrophy);
+      myProfile = p; myTrophy = p.trophy; $('nick').value = p.nickname; store.set('omok_trophy_cache', myTrophy);
       if (p.streak != null) myStreak = p.streak; else streakCol = false;      // streak 컬럼이 없으면 이 기기에만 저장
-      localStorage.setItem('omok_streak', myStreak);
+      store.set('omok_streak', myStreak);
     }
-    $('auth').textContent = '🟢 온라인'; $('auth').style.color = 'var(--mint)';
+    $('auth').textContent = '✅ 계정 연결됨'; $('auth').style.color = 'var(--mint)';
   } catch (e) {
     $('auth').textContent = '⚠️ 연결 실패'; $('auth').style.color = 'var(--red)';
     console.warn(e);
     toast('계정 연결 실패: ' + ((e && e.message) || e), 8000);
+    if (!sbOffline) { window.__errs.push('계정 연결 실패: ' + ((e && e.message) || JSON.stringify(e)) + '\n→ Supabase 프로젝트 일시정지 / 익명 로그인 꺼짐 / omok_profiles 테이블·정책 확인'); showDiag(); }
   }
   updateLobby();
 }
 
 async function ensureProfile(nick) {
-  if (nick.length < 2) { toast('닉네임은 2자 이상 입력해주세요'); return false; }
+  if (nick.length < 2) { toast('닉네임은 2자 이상 입력해주세요!'); return false; }
   if (!myUserId) { myNickname = nick; return true; }
   try {
     if (!myProfile) {
-      const { data, error } = await sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single();
+      const { data, error } = await tmo(sb.from('omok_profiles').insert({ user_id:myUserId, nickname:nick, trophy:100 }).select().single());
       if (error) throw error; myProfile = data;
     } else if (myProfile.nickname !== nick) {
-      const { data, error } = await sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single();
+      const { data, error } = await tmo(sb.from('omok_profiles').update({ nickname:nick, updated_at:new Date().toISOString() }).eq('user_id', myUserId).select().single());
       if (error) throw error; myProfile = data;
     }
-    myNickname = nick; myTrophy = myProfile.trophy; localStorage.setItem('omok_trophy_cache', myTrophy); updateLobby();
+    myNickname = nick; myTrophy = myProfile.trophy; store.set('omok_trophy_cache', myTrophy); updateLobby();
     return true;
   } catch (e) {
     if (e && e.code === '23505') { toast('이미 사용 중인 닉네임입니다.'); return false; }
-    toast('⚠️ 서버 저장 불가. 이번 판 점수는 저장되지 않습니다.', 4000);
+    toast('⚠️ 서버 저장 불가. 이번 판 트로피는 저장되지 않습니다.', 4000);
     myNickname = nick; return true;
   }
 }
 
 async function saveTrophy() {
-  localStorage.setItem('omok_trophy_cache', myTrophy); localStorage.setItem('omok_streak', myStreak);
+  store.set('omok_trophy_cache', myTrophy); store.set('omok_streak', myStreak);
   if (!myUserId || !myProfile) return;
   const row = { trophy:myTrophy, updated_at:new Date().toISOString() };
   if (streakCol) row.streak = myStreak;
@@ -544,7 +631,7 @@ async function saveTrophy() {
     streakCol = false; delete row.streak; console.warn('omok_profiles.streak 컬럼이 없어요. 파일 맨 위 SQL을 실행하세요.');
     ({ error } = await sb.from('omok_profiles').update(row).eq('user_id', myUserId));
   }
-  if (error) toast('점수 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
+  if (error) toast('트로피 저장 실패: ' + error.message); else myProfile.trophy = myTrophy;
 }
 
 // ===== 비밀번호 =====
@@ -745,12 +832,12 @@ function startSession(code, status) {
 function updateCards() {
   $('game').classList.toggle('three', maxP === 3 && gameMode === 'online');
   $('my-nm').textContent = myNickname;
-  $('my-tro').textContent = `🏆 ${myTrophy} 점` + streakTxt(myStreak);
+  $('my-tro').textContent = `🏆 ${myTrophy} 트로피` + streakTxt(myStreak);
   $('my-tier').textContent = getTier(myTrophy);
   $('my-si').className = 'si ' + (myColor || 'black');
   if (gameMode === 'ai') {
     $('opp2-card').classList.add('hidden');
-    $('opp-nm').textContent = `🤖 AI (${AI_LBL[aiLevel]})`; $('opp-tro').textContent = '승리 시 +30 🏆' + (rs ? ` · 🎒 아이템 ${rs.inv[aiColor].length}개` : ''); $('opp-tier').textContent = 'AI';
+    $('opp-nm').textContent = `🤖 AI (${AI_LBL[aiLevel]})`; $('opp-tro').textContent = '승리 시 +10 🏆' + (rs ? ` · 🎒 아이템 ${rs.inv[aiColor].length}개` : ''); $('opp-tier').textContent = 'AI';
     $('opp-si').className = 'si ' + aiColor; return;
   }
   const fl = foes(myColor || 'black');
@@ -760,7 +847,7 @@ function updateCards() {
     $(p + '-si').className = 'si ' + c;
     if (n) {
       $(p + '-nm').textContent = n; $(p + '-tier').textContent = getTier(pl[c].t);
-      $(p + '-tro').textContent = `🏆 ${pl[c].t} 점` + (rs ? ` · 🎒 아이템 ${((rs.inv && rs.inv[c]) || []).length}개` : '');
+      $(p + '-tro').textContent = `🏆 ${pl[c].t} 트로피` + (rs ? ` · 🎒 아이템 ${((rs.inv && rs.inv[c]) || []).length}개` : '');
     } else { $(p + '-nm').textContent = maxP === 3 ? '플레이어 입장 대기 중...' : '상대 입장 대기 중...'; $(p + '-tier').textContent = '대기'; $(p + '-tro').textContent = ''; }
   });
 }
@@ -899,7 +986,7 @@ async function requestRematch3() {
 }
 
 // ===== 이모티콘 =====
-const EMOS = ['😀','😂','😎','🥹','😭','😡','🤔','😱','👍','👏','🙏','🔥','🖕','🤝','💪','🎉','😏','🫡'];
+const EMOS = ['😀','😂','😎','🥹','😭','😡','🤔','😱','👍','👏','🙏','🔥','😴','🤝','💪','🎉','😏','🫡'];
 let emoSub = null, emoCool = 0;
 EMOS.forEach(e => { const b = h('button', '', e); b.onclick = () => sendEmo(e); $('emo-panel').appendChild(b); });
 $('emo-btn').onclick = () => $('emo-panel').classList.toggle('hidden');
@@ -948,6 +1035,8 @@ function updateTurnUI() {
 function renderItems() {
   drawMines();
   const bar = $('items'), hint = $('hint');
+  $('adm-box').classList.toggle('hidden', !(admin && rs));
+  if (admin && rs) $('adm-grid').querySelectorAll('.aitem').forEach(b => b.classList.toggle('on', b.dataset.k === pending));
   if (!rs) { bar.classList.add('hidden'); hint.classList.add('hidden'); $('endturn').classList.add('hidden'); return; }
   bar.classList.remove('hidden'); hint.classList.remove('hidden'); bar.innerHTML = '';
   const inv = rs.inv[myColor] || [];
@@ -1066,6 +1155,7 @@ function playFx(t, r, c, by, list) {
 }
 
 function setPending(t) {
+  adminClean(t);
   pending = t;
   $('board').className = (t === 'bomb' || t === 'convert') ? foes(myColor).map(c => 'tg-' + c).join(' ') : '';
   renderItems();
@@ -1162,10 +1252,10 @@ async function pickItem(t) {
   if (uiLocked()) return;
   if (!rs || roomStatus !== 'playing' || currentTurn !== myColor) return toast('내 차례에만 쓸 수 있어요!');
   if (!rs.inv[myColor].includes(t)) return;
-  if (rs.fz && rs.fz[myColor]) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
+  if (rs.fz && rs.fz[myColor] && !admin) return toast('🧊 동결 상태! 이번 턴에는 아이템을 쓸 수 없어요');
   if (rs.dbl[myColor]) return toast('⚡ 연속 착수 중에는 아이템을 쓸 수 없어요!');
-  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
-  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
+  if (t === 'double' && rs.u && !admin) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (t === 'double' && doubleLocked() && !admin) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
   if (pending !== t) return setPending(t);          // 첫 터치: 선택 + 설명
   if (ITEMS[t].t) return setPending(null);          // 대상형: 다시 누르면 취소
   useInstant(t);                                    // 즉시형: 한 번 더 누르면 사용
@@ -1180,9 +1270,9 @@ async function useInstant(t) {
 async function runInstant(t) {
   const me = myColor, ai = gameMode === 'ai', k = Date.now(), fl = foes(me);
   if (!rs || !rs.inv[me].includes(t)) return;
-  if (t === 'double' && doubleLocked()) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
-  if (t === 'double' && rs.u) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
-  if (t === 'reroll' && rs.inv[me].length < 2) return toast('바꿀 다른 아이템이 없어요!');
+  if (t === 'double' && doubleLocked() && !admin) return toast('⚡ 연속은 연속으로 쓸 수 없어요!');
+  if (t === 'double' && rs.u && !admin) return toast('⚡ 연속은 다른 아이템을 쓰기 전에만 쓸 수 있어요!');
+  if (t === 'reroll' && rs.inv[me].length < 2 && !admin) return toast('바꿀 다른 아이템이 없어요!');
 
   // ① 대상 플레이어가 필요한 아이템 (상대가 1명이면 자동, 2명이면 선택창)
   let tg = null;
@@ -1792,6 +1882,70 @@ function pickAi() {
   return [p.r, p.c];
 }
 
+// ===== 🛠️ 관리자 모드 (로비의 ⚫ 돌을 위로 밀면 ON, 아래로 내리면 OFF) =====
+// 관리자가 고른 아이템을 임시로 인벤토리에 넣어 주고, 쓰지 않고 취소하면 다시 뺀다
+function adminClean(keep) {
+  if (!adminTmp || adminTmp === keep) return;
+  const l = rs && rs.inv && rs.inv[myColor];
+  if (l) { const i = l.indexOf(adminTmp); if (i >= 0) l.splice(i, 1); }
+  adminTmp = null;
+}
+function adminPick(t) {
+  if (!admin || !rs) return;
+  adminClean(t);
+  if (!rs.inv[myColor].includes(t)) { rs.inv[myColor].push(t); adminTmp = t; }
+  pickItem(t);
+}
+function applyAdmin() {
+  $('admin-av').classList.toggle('adm', admin);
+  $('adm-lobby').classList.toggle('hidden', !admin);
+  updateLobby(); renderItems();
+}
+function setAdmin(on) {
+  if (on === admin) return;
+  admin = on;
+  try { sessionStorage.setItem('omok_admin', on ? '1' : ''); } catch (e) {}
+  applyAdmin();
+  toast(on ? '🛠️ 관리자 모드 ON — 모든 아이템 사용 · 트로피 조작 가능' : '🛠️ 관리자 모드 OFF');
+}
+(() => {
+  const av = $('admin-av'); let sy = null, sx = 0;
+  av.addEventListener('pointerdown', e => { sy = e.clientY; sx = e.clientX; try { av.setPointerCapture(e.pointerId); } catch (x) {} });
+  av.addEventListener('pointerup', e => {
+    if (sy == null) return;
+    const dy = sy - e.clientY, dx = Math.abs(sx - e.clientX); sy = null;
+    if (Math.abs(dy) > 40 && dx < 60) setAdmin(dy > 0);
+  });
+  av.addEventListener('pointercancel', () => sy = null);
+})();
+async function admSet(t, s) {
+  if (!admin) return;
+  if (!myProfile) {
+    const nick = $('nick').value.trim();
+    if (!nick) return toast('닉네임을 먼저 입력해주세요!');
+    if (!(await ensureProfile(nick))) return;
+  }
+  const old = tierRank(myTrophy);
+  myTrophy = Math.max(0, Math.min(99999, Math.round(t)));
+  myStreak = Math.max(-999, Math.min(999, Math.round(s)));
+  await saveTrophy(); updateLobby();
+  const nr = tierRank(myTrophy);
+  if (nr !== old) showPromo(nr < old, TIERS[nr][1], TIERS[old][1]);
+  toast(`🛠️ 트로피 ${myTrophy} · ${myStreak >= 0 ? myStreak + '연승' : -myStreak + '연패'} 적용`);
+}
+$('adm-go').onclick = () => {
+  const t = parseInt($('adm-t').value), s = parseInt($('adm-s').value);
+  admSet(Number.isFinite(t) ? t : myTrophy, Number.isFinite(s) ? s : myStreak);
+};
+document.querySelectorAll('.adm-q').forEach(b => b.onclick = () => admSet(myTrophy + parseInt(b.dataset.d), myStreak));
+Object.keys(ITEMS).forEach(k => {
+  const it = ITEMS[k], b = h('button', 'aitem'); b.dataset.k = k;
+  b.appendChild(h('span', 'ico', it.i)); b.appendChild(h('span', '', it.n));
+  b.onclick = () => adminPick(k); $('adm-grid').appendChild(b);
+});
+applyAdmin();
+
+$('auth').onclick = () => { if (!myUserId) initAuth(); };      // 연결 실패 시 글자를 누르면 다시 시도
 initAuth().then(startPolling);
 </script>
 </body>
